@@ -8,10 +8,12 @@
 - 🐛 **失败原因可见**：作答失败时日志会直接写明原因（HTTP 状态码、接口地址、超时、格式解析失败等），并带有大模型连接自检日志。
 - 🖱 面板支持滚轮滚动，设置项带说明文字。
 
+> 📖 **第一次用、没用过脚本管理器？照着这份从零教程做：[使用教程](./使用教程.md)**
+
 ## 安装
 
 1. 浏览器安装脚本管理器：[脚本猫](https://docs.scriptcat.org/) 或 Tampermonkey。
-2. 打开 [`chaoxing-llm-answer.user.js`](./chaoxing-llm-answer.user.js)，点 `Raw`，按提示安装。
+2. 打开 [`chaoxing-llm-answer.user.js`](./chaoxing-llm-answer.user.js)，点 `Raw`，按提示安装；或者直接打开这条 raw 链接自动弹出安装页：https://raw.githubusercontent.com/poki-cpu/chaoxing-llm-answer/main/chaoxing-llm-answer.user.js
 3. 进入学习通 / 知到智慧树的答题页面，页面右上角会出现脚本面板。
 
 ## 使用
@@ -45,6 +47,8 @@
 - 脚本会附带 `?s=作者&v=版本号` 查询参数，服务端忽略即可
 
 ## 常见问题
+
+> 更完整的报错对照表在 [使用教程 · 常见报错对照表](./使用教程.md#六常见报错对照表)。
 
 - 日志里没有 `大模型答题已就绪`：说明接口地址 / API 密钥 / 模型名称没填全，去「设置」补齐后刷新页面。
 - 提示 `GM_xmlhttpRequest 不可用`：脚本管理器没有授予跨域权限，重新安装脚本并同意授权。
