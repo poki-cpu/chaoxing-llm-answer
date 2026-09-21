@@ -1,10 +1,14 @@
 // ==UserScript==
 // @name         🥇超星学习通｜知到智慧树--网课小助手（大模型答题版）
 // @namespace    noshuang
-// @version      0.4.0
+// @version      0.4.1
 // @author       isMobile
 // @description  🫧 目前已经支持的平台：【超星学习通「功能基本完成」】【知到智慧树「目前只支持答题」】。🚀 目前已经具有的功能包括：▶️视频自动观看，跳转下一个任务点，📄章节测试、作业自动完成，无答案自动保存，💯考试自动完成，自动切换、保存。使用脚本请进入对应平台的页面。📚 脚本不内置题库、也不推荐题库服务商：题库接口需自带（在「答题」页填地址和密钥），没有题库可以直接用大模型答题。🤖 新增大模型答题：在「设置 - 大模型答题设置」里填好接口地址、API 密钥和模型名称，即可让大模型自动作答（支持 OpenAI 兼容接口，如 DeepSeek、通义千问、Kimi、智谱、硅基流动等）。
 // @license      MIT
+// @homepageURL  https://github.com/poki-cpu/chaoxing-llm-answer
+// @supportURL   https://github.com/poki-cpu/chaoxing-llm-answer/issues
+// @updateURL    https://raw.githubusercontent.com/poki-cpu/chaoxing-llm-answer/main/chaoxing-llm-answer.user.js
+// @downloadURL  https://raw.githubusercontent.com/poki-cpu/chaoxing-llm-answer/main/chaoxing-llm-answer.user.js
 // @icon         data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext x='50' y='54' text-anchor='middle' dominant-baseline='central' font-size='82' font-family='Apple Color Emoji,Segoe UI Emoji,Noto Color Emoji,sans-serif'%3E%F0%9F%92%AF%3C/text%3E%3C/svg%3E
 // @match        *://*.chaoxing.com/*
 // @match        *://*.edu.cn/*
