@@ -42,6 +42,7 @@
 - 请求体：`{"stem": "题干", "options": ["选项1", "选项2"], "type": "0"}`
 - 返回：`{"success": true, "data": {"items": [{"stem": "题干", "answer": {"values": ["答案"]}}]}, "error": null, "meta": null}`
 - 密钥：放在 `X-Consumer-Token` 请求头里
+- 脚本会附带 `?s=作者&v=版本号` 查询参数，服务端忽略即可
 
 ## 常见问题
 
