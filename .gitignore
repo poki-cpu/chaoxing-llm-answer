@@ -1,0 +1,13 @@
+node_modules/
+vendor/
+scdb*/
+*.log
+patch*.js
+check*.js
+verify.js
+lsdb.js
+sc*.js
+installed*.user.js
+installed-values.json
+package.json
+package-lock.json
