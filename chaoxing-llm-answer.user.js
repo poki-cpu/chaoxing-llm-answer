@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🥇超星学习通｜知到智慧树--网课小助手（大模型答题版）
 // @namespace    noshuang
-// @version      0.6.0
+// @version      0.6.1
 // @author       isMobile
 // @description  🫧 目前已经支持的平台：【超星学习通「功能基本完成」】【知到智慧树「目前只支持答题」】。🚀 目前已经具有的功能包括：▶️视频自动观看，跳转下一个任务点，📄章节测试、作业自动完成，无答案自动保存，💯考试自动完成，自动切换、保存。使用脚本请进入对应平台的页面。📚 脚本不内置题库、也不推荐题库服务商：题库接口需自带（在「答题」页填地址和密钥），没有题库可以直接用大模型答题。🤖 新增大模型答题：在「设置 - 大模型答题设置」里填好接口地址、API 密钥和模型名称，即可让大模型自动作答（支持 OpenAI 兼容接口，如 DeepSeek、通义千问、Kimi、智谱、硅基流动等）。✍️ 选择题答案会明确标出该选 A、B、C、D 中的哪一个选项，判断题给出「对」或「错」。🔎 模型名称支持一键从接口地址拉取，拉回来直接在下拉框里选。
 // @license      MIT
@@ -795,26 +795,44 @@
     });
   };
   let llmModelListCache = [];
+  const LLM_DEBUG_STORAGE_KEY = "llmDebugLog";
+  const recordLlmDebug = (entry) => {
+    try {
+      const previous = _GM_getValue(LLM_DEBUG_STORAGE_KEY);
+      const list = Array.isArray(previous) ? previous : [];
+      list.push({ time: (/* @__PURE__ */ new Date()).toLocaleString(), ...entry });
+      while (list.length > 12)
+        list.shift();
+      _GM_setValue(LLM_DEBUG_STORAGE_KEY, list);
+    } catch (error) {
+      console.error(error);
+    }
+  };
   const buildLlmModelsUrl = (baseUrl) => {
     const base = String(baseUrl || "").trim().replace(/\/+$/, "").replace(/\/chat\/completions$/i, "");
     return `${base}/models`;
   };
-  const requestLlmModels = (settings) => {
-    const requestUrl = buildLlmModelsUrl(settings.baseUrl);
+  const buildLlmModelsUrlCandidates = (baseUrl) => {
+    const base = String(baseUrl || "").trim().replace(/\/+$/, "").replace(/\/chat\/completions$/i, "");
+    const candidates = [`${base}/models`];
+    if (!/\/v1$/i.test(base))
+      candidates.push(`${base}/v1/models`);
+    return Array.from(new Set(candidates));
+  };
+  const requestLlmModelsOnce = (settings, requestUrl) => {
     const timeoutSeconds = Math.min(300, Math.max(5, settings.timeout || 60));
     return new Promise((resolve) => {
-      if (!settings.baseUrl) {
-        resolve({ success: false, message: "请先填写接口地址" });
-        return;
-      }
-      if (!settings.apiKey) {
-        resolve({ success: false, message: "请先填写 API 密钥，多数平台要带密钥才能读取模型列表" });
-        return;
-      }
-      if (typeof _GM_xmlhttpRequest !== "function") {
-        resolve({ success: false, message: "GM_xmlhttpRequest 不可用：脚本猫没有给本脚本跨域权限，请重新安装脚本并同意跨域授权" });
-        return;
-      }
+      let done = false;
+      let watchdog = null;
+      const finish = (result) => {
+        if (done)
+          return;
+        done = true;
+        if (watchdog)
+          clearTimeout(watchdog);
+        resolve(result);
+      };
+      watchdog = setTimeout(() => finish({ success: false, message: `等了 ${timeoutSeconds + 5} 秒也没收到脚本管理器的响应，可能是脚本管理器没有放行这个请求（${requestUrl}）` }), (timeoutSeconds + 5) * 1e3);
       try {
         _GM_xmlhttpRequest({
           url: requestUrl,
@@ -828,33 +846,57 @@
             const raw = String(response.responseText || "");
             const brief = raw.replace(/\s+/g, " ").slice(0, 200);
             if (response.status < 200 || response.status >= 300) {
-              resolve({ success: false, message: `接口返回 HTTP ${response.status}${brief ? `：${brief}` : ""}（${requestUrl}）` });
+              finish({ success: false, message: `接口返回 HTTP ${response.status}${brief ? `：${brief}` : ""}（${requestUrl}）` });
               return;
             }
             let body;
             try {
               body = JSON.parse(raw);
             } catch (error) {
-              resolve({ success: false, message: `接口响应不是合法 JSON，这个平台可能不支持 /models：${brief}` });
+              finish({ success: false, message: `接口响应不是合法 JSON，这个平台可能不支持 /models：${brief}` });
               return;
             }
             const list = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : [];
             const models = Array.from(new Set(list.map((item) => String(item?.id ?? item?.name ?? item?.model ?? item ?? "").trim()).filter(Boolean)));
             if (!models.length) {
-              resolve({ success: false, message: `接口没有返回模型列表，可能这个平台不支持 /models：${brief}` });
+              finish({ success: false, message: `接口没有返回模型列表，可能这个平台不支持 /models：${brief}` });
               return;
             }
             models.sort((left, right) => left.localeCompare(right));
-            resolve({ success: true, models });
+            finish({ success: true, models, url: requestUrl });
           },
-          onerror: () => resolve({ success: false, message: `请求出错：可能是跨域被拒绝、网络不通或接口地址写错（${requestUrl}）` }),
-          ontimeout: () => resolve({ success: false, message: `请求超时（超过 ${timeoutSeconds} 秒），可在设置里调大超时时间` }),
-          onabort: () => resolve({ success: false, message: "请求已取消" })
+          onerror: () => finish({ success: false, message: `请求出错：可能是跨域被拒绝、网络不通或接口地址写错（${requestUrl}）` }),
+          ontimeout: () => finish({ success: false, message: `请求超时（超过 ${timeoutSeconds} 秒），可在设置里调大超时时间` }),
+          onabort: () => finish({ success: false, message: "请求已取消" })
         });
       } catch (error) {
-        resolve({ success: false, message: `发起请求时抛出异常：${error?.message || error}` });
+        finish({ success: false, message: `发起请求时抛出异常：${error?.message || error}` });
       }
     });
+  };
+  const requestLlmModels = async (settings) => {
+    if (!settings.baseUrl)
+      return { success: false, message: "请先填写接口地址" };
+    if (!settings.apiKey)
+      return { success: false, message: "请先填写 API 密钥，多数平台要带密钥才能读取模型列表" };
+    if (typeof _GM_xmlhttpRequest !== "function")
+      return { success: false, message: "GM_xmlhttpRequest 不可用：脚本管理器没有给本脚本跨域权限，请重新安装脚本并同意授权" };
+    const tried = [];
+    let last = { success: false, message: "没有可用的请求地址" };
+    for (const requestUrl of buildLlmModelsUrlCandidates(settings.baseUrl)) {
+      last = await requestLlmModelsOnce(settings, requestUrl);
+      tried.push(`${requestUrl} → ${last.success ? "成功" : last.message}`);
+      if (last.success)
+        break;
+    }
+    recordLlmDebug({
+      action: "获取模型列表",
+      model: settings.model || "(空)",
+      keyLen: String(settings.apiKey || "").length,
+      result: last.success ? `成功：${last.models.join("/")}` : `失败：${last.message}`,
+      tried
+    });
+    return last.success ? last : { success: false, message: `${last.message}。已尝试：${tried.join(" ；")}` };
   };
   const askLlm = async (question) => {
     try {
@@ -867,8 +909,10 @@
         return apiError("请先在「设置 - 大模型答题设置」中填写模型名称");
       const startedAt = Date.now();
       const response = await requestLlmChat(settings, buildLlmMessages(question));
-      if (!response.success)
+      if (!response.success) {
+        recordLlmDebug({ action: "答题请求", model: settings.model, url: buildLlmChatUrl(settings.baseUrl), ok: false, detail: String(response.message).slice(0, 200) });
         return apiError(response.message);
+      }
       const parsed = parseLlmAnswerJson(response.content);
       if (!parsed)
         return apiError(`无法解析大模型返回的答案格式：${String(response.content).replace(/\s+/g, " ").slice(0, 120)}`);
@@ -1108,9 +1152,12 @@
         if (llmModelFetching.value)
           return;
         llmModelFetching.value = true;
+        llmModelOptions.value = llmModelListCache;
         logStore.addLog("正在从接口获取模型列表，请稍等…", "warning");
         try {
-          const result = await requestLlmModels(getLlmSettings());
+          const settings = getLlmSettings();
+          logStore.addLog(`请求地址：${escapeLogText(buildLlmModelsUrl(settings.baseUrl) || "（接口地址还没填）")}`, "primary");
+          const result = await requestLlmModels(settings);
           if (!result.success) {
             llmModelListCache = [];
             llmModelOptions.value = [];
@@ -1119,12 +1166,20 @@
           }
           llmModelListCache = result.models;
           llmModelOptions.value = result.models;
-          logStore.addLog(`已获取到 ${result.models.length} 个模型，在「模型名称」下面的下拉框里选一个即可`, "success");
+          logStore.addLog(`已获取到 ${result.models.length} 个模型：${escapeLogText(result.models.slice(0, 8).join("、"))}${result.models.length > 8 ? " …" : ""}`, "success");
+          logStore.addLog("请在「模型名称」下面的下拉框里选一个模型", "primary");
         } catch (error) {
           logStore.addLog(`获取模型列表异常：${escapeLogText(error?.message || error)}`, "danger");
         } finally {
           llmModelFetching.value = false;
         }
+      };
+      const applyLlmModel = (value) => {
+        const param = __props.globalConfig?.llm?.params?.find((item) => item.name === "模型名称");
+        const nextValue = value == null ? "" : String(value).trim();
+        if (param)
+          param.value = nextValue;
+        logStore.addLog(nextValue ? `已选择模型：${escapeLogText(nextValue)}` : "模型名称已清空，请重新选择", nextValue ? "success" : "warning");
       };
       return (_ctx, _cache) => {
         const _component_el_divider = vue.resolveComponent("el-divider");
@@ -1297,9 +1352,8 @@
                       llmModelOptions.value.length ? (vue.openBlock(), vue.createBlock(_component_el_select, {
                         key: "model-select",
                         modelValue: item.value,
-                        "onUpdate:modelValue": ($event) => item.value = $event,
+                        "onUpdate:modelValue": applyLlmModel,
                         filterable: true,
-                        clearable: true,
                         size: "small",
                         placeholder: "在拉回来的模型里选一个",
                         style: { width: "100%" }
@@ -1315,7 +1369,7 @@
                         ]),
                         _: 2
                       }, 1032, ["modelValue"])) : vue.createCommentVNode("", true),
-                      vue.createElementVNode("div", { class: "setting-hint" }, "点上面的按钮会请求该接口地址的 /models，拉回来的模型名会出现在下拉框里，选一个就行，也可以继续手动填写。")
+                      vue.createElementVNode("div", { class: "setting-hint" }, "点上面的按钮会请求该接口地址的 /models，拉回来的模型名会出现在下拉框里，选一个就填好了；也可以继续手动填写。")
                     ])) : vue.createCommentVNode("", true)
                   ]),
                   _: 2
