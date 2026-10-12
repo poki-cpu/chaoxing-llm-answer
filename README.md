@@ -29,7 +29,7 @@
 | 答题策略 | `llm_first` 大模型优先、失败再查题库；`llm_only` 只用大模型；`tiku_first` 题库优先；`tiku_only` 只用题库 |
 | 接口地址 | OpenAI 兼容接口，例如 `https://api.deepseek.com`（脚本会自动补 `/chat/completions`） |
 | API 密钥 | 你自己申请的密钥 |
-| 模型名称 | 例如 `deepseek-chat`、`qwen-plus`、`glm-4-plus`；也可以点下面的「从接口获取模型列表」，脚本会请求该接口地址的 `/models`，把可用模型列出来，点一下就填好 |
+| 模型名称 | 例如 `deepseek-chat`、`qwen-plus`、`glm-4-plus`；也可以点下面的「从接口获取模型列表」，脚本会请求该接口地址的 `/models`，把可用模型放进下拉框，选中即填好 |
 | 温度 | `0~2`，越低回答越稳定、越保守；答题建议 `0~0.3`，默认 `0.2` 即可 |
 | 超时时间，单位秒 | 默认 60，网络慢可以调大 |
 
