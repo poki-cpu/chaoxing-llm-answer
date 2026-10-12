@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         🥇超星学习通｜知到智慧树--网课小助手（大模型答题版）
 // @namespace    noshuang
-// @version      0.5.0
+// @version      0.6.0
 // @author       isMobile
-// @description  🫧 目前已经支持的平台：【超星学习通「功能基本完成」】【知到智慧树「目前只支持答题」】。🚀 目前已经具有的功能包括：▶️视频自动观看，跳转下一个任务点，📄章节测试、作业自动完成，无答案自动保存，💯考试自动完成，自动切换、保存。使用脚本请进入对应平台的页面。📚 脚本不内置题库、也不推荐题库服务商：题库接口需自带（在「答题」页填地址和密钥），没有题库可以直接用大模型答题。🤖 新增大模型答题：在「设置 - 大模型答题设置」里填好接口地址、API 密钥和模型名称，即可让大模型自动作答（支持 OpenAI 兼容接口，如 DeepSeek、通义千问、Kimi、智谱、硅基流动等）。✍️ 选择题答案会明确标出该选 A、B、C、D 中的哪一个选项，判断题给出「对」或「错」。
+// @description  🫧 目前已经支持的平台：【超星学习通「功能基本完成」】【知到智慧树「目前只支持答题」】。🚀 目前已经具有的功能包括：▶️视频自动观看，跳转下一个任务点，📄章节测试、作业自动完成，无答案自动保存，💯考试自动完成，自动切换、保存。使用脚本请进入对应平台的页面。📚 脚本不内置题库、也不推荐题库服务商：题库接口需自带（在「答题」页填地址和密钥），没有题库可以直接用大模型答题。🤖 新增大模型答题：在「设置 - 大模型答题设置」里填好接口地址、API 密钥和模型名称，即可让大模型自动作答（支持 OpenAI 兼容接口，如 DeepSeek、通义千问、Kimi、智谱、硅基流动等）。✍️ 选择题答案会明确标出该选 A、B、C、D 中的哪一个选项，判断题给出「对」或「错」。🔎 模型名称支持一键从接口地址拉取，拉回来直接在下拉框里选。
 // @license      MIT
 // @homepageURL  https://github.com/poki-cpu/chaoxing-llm-answer
 // @supportURL   https://github.com/poki-cpu/chaoxing-llm-answer/issues
@@ -794,6 +794,68 @@
       }
     });
   };
+  let llmModelListCache = [];
+  const buildLlmModelsUrl = (baseUrl) => {
+    const base = String(baseUrl || "").trim().replace(/\/+$/, "").replace(/\/chat\/completions$/i, "");
+    return `${base}/models`;
+  };
+  const requestLlmModels = (settings) => {
+    const requestUrl = buildLlmModelsUrl(settings.baseUrl);
+    const timeoutSeconds = Math.min(300, Math.max(5, settings.timeout || 60));
+    return new Promise((resolve) => {
+      if (!settings.baseUrl) {
+        resolve({ success: false, message: "请先填写接口地址" });
+        return;
+      }
+      if (!settings.apiKey) {
+        resolve({ success: false, message: "请先填写 API 密钥，多数平台要带密钥才能读取模型列表" });
+        return;
+      }
+      if (typeof _GM_xmlhttpRequest !== "function") {
+        resolve({ success: false, message: "GM_xmlhttpRequest 不可用：脚本猫没有给本脚本跨域权限，请重新安装脚本并同意跨域授权" });
+        return;
+      }
+      try {
+        _GM_xmlhttpRequest({
+          url: requestUrl,
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${settings.apiKey}`,
+            "Accept": "application/json"
+          },
+          timeout: timeoutSeconds * 1e3,
+          onload: (response) => {
+            const raw = String(response.responseText || "");
+            const brief = raw.replace(/\s+/g, " ").slice(0, 200);
+            if (response.status < 200 || response.status >= 300) {
+              resolve({ success: false, message: `接口返回 HTTP ${response.status}${brief ? `：${brief}` : ""}（${requestUrl}）` });
+              return;
+            }
+            let body;
+            try {
+              body = JSON.parse(raw);
+            } catch (error) {
+              resolve({ success: false, message: `接口响应不是合法 JSON，这个平台可能不支持 /models：${brief}` });
+              return;
+            }
+            const list = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : [];
+            const models = Array.from(new Set(list.map((item) => String(item?.id ?? item?.name ?? item?.model ?? item ?? "").trim()).filter(Boolean)));
+            if (!models.length) {
+              resolve({ success: false, message: `接口没有返回模型列表，可能这个平台不支持 /models：${brief}` });
+              return;
+            }
+            models.sort((left, right) => left.localeCompare(right));
+            resolve({ success: true, models });
+          },
+          onerror: () => resolve({ success: false, message: `请求出错：可能是跨域被拒绝、网络不通或接口地址写错（${requestUrl}）` }),
+          ontimeout: () => resolve({ success: false, message: `请求超时（超过 ${timeoutSeconds} 秒），可在设置里调大超时时间` }),
+          onabort: () => resolve({ success: false, message: "请求已取消" })
+        });
+      } catch (error) {
+        resolve({ success: false, message: `发起请求时抛出异常：${error?.message || error}` });
+      }
+    });
+  };
   const askLlm = async (question) => {
     try {
       const settings = getLlmSettings();
@@ -1035,6 +1097,35 @@
           llmTesting.value = false;
         }
       };
+      const configStore = useConfigStore();
+      const llmModelFetching = vue.ref(false);
+      const llmModelOptions = vue.ref(llmModelListCache);
+      vue.watch(() => String(getLlmParam(configStore, "接口地址")?.value || ""), () => {
+        llmModelListCache = [];
+        llmModelOptions.value = [];
+      });
+      const fetchLlmModels = async () => {
+        if (llmModelFetching.value)
+          return;
+        llmModelFetching.value = true;
+        logStore.addLog("正在从接口获取模型列表，请稍等…", "warning");
+        try {
+          const result = await requestLlmModels(getLlmSettings());
+          if (!result.success) {
+            llmModelListCache = [];
+            llmModelOptions.value = [];
+            logStore.addLog(`获取模型列表失败：${escapeLogText(result.message)}`, "danger");
+            return;
+          }
+          llmModelListCache = result.models;
+          llmModelOptions.value = result.models;
+          logStore.addLog(`已获取到 ${result.models.length} 个模型，在「模型名称」下面的下拉框里选一个即可`, "success");
+        } catch (error) {
+          logStore.addLog(`获取模型列表异常：${escapeLogText(error?.message || error)}`, "danger");
+        } finally {
+          llmModelFetching.value = false;
+        }
+      };
       return (_ctx, _cache) => {
         const _component_el_divider = vue.resolveComponent("el-divider");
         const _component_el_checkbox = vue.resolveComponent("el-checkbox");
@@ -1186,7 +1277,46 @@
                       size: "small",
                       clearable: true,
                       placeholder: item.placeholder || ""
-                    }, null, 8, ["modelValue", "type", "placeholder"])
+                    }, null, 8, ["modelValue", "type", "placeholder"]),
+                    item.name === "模型名称" ? (vue.openBlock(), vue.createElementBlock("div", {
+                      key: "llm-model-picker",
+                      class: "setting-model"
+                    }, [
+                      vue.createVNode(_component_el_button, {
+                        size: "small",
+                        type: "primary",
+                        plain: true,
+                        loading: llmModelFetching.value,
+                        onClick: fetchLlmModels
+                      }, {
+                        default: vue.withCtx(() => [
+                          vue.createTextVNode("从接口获取模型列表")
+                        ]),
+                        _: 1
+                      }, 8, ["loading"]),
+                      llmModelOptions.value.length ? (vue.openBlock(), vue.createBlock(_component_el_select, {
+                        key: "model-select",
+                        modelValue: item.value,
+                        "onUpdate:modelValue": ($event) => item.value = $event,
+                        filterable: true,
+                        clearable: true,
+                        size: "small",
+                        placeholder: "在拉回来的模型里选一个",
+                        style: { width: "100%" }
+                      }, {
+                        default: vue.withCtx(() => [
+                          (vue.openBlock(true), vue.createElementBlock(vue.Fragment, null, vue.renderList(llmModelOptions.value, (model) => {
+                            return vue.openBlock(), vue.createBlock(_component_el_option, {
+                              key: model,
+                              label: model,
+                              value: model
+                            }, null, 8, ["label", "value"]);
+                          }), 128))
+                        ]),
+                        _: 2
+                      }, 1032, ["modelValue"])) : vue.createCommentVNode("", true),
+                      vue.createElementVNode("div", { class: "setting-hint" }, "点上面的按钮会请求该接口地址的 /models，拉回来的模型名会出现在下拉框里，选一个就行，也可以继续手动填写。")
+                    ])) : vue.createCommentVNode("", true)
                   ]),
                   _: 2
                 }, 1032, ["label"])) : (vue.openBlock(), vue.createBlock(_component_el_form_item, {
@@ -1366,7 +1496,7 @@
     "aria-label": "使用教程",
     tabindex: "0"
   };
-  const _hoisted_2$2 = /* @__PURE__ */ vue.createStaticVNode('<header class="guide-header"><div class="guide-heading-row"><h2 class="guide-title">使用教程</h2><span class="guide-tag">脚本免费</span></div><p class="guide-subtitle">配置一次，之后打开对应页面就会自动答题。</p></header><ol class="guide-list"><li class="guide-card"><div class="guide-card-heading"><span class="guide-number" aria-hidden="true">01</span><h3 class="guide-card-title">推荐：用大模型答题</h3></div><p class="guide-copy">在「设置」页最下方的「大模型答题设置」里填好接口地址、API 密钥和模型名称，就能让大模型直接作答。接口需要兼容 OpenAI 的 <strong>/chat/completions</strong> 协议（DeepSeek、通义千问、Kimi、智谱、硅基流动等都支持）。填好后点「测试大模型连接」可以验证配置是否正确。答题时选择题会按「B. 选项内容」的形式明确给出选项，判断题给出「对」或「错」。</p></li><li class="guide-card"><div class="guide-card-heading"><span class="guide-number" aria-hidden="true">02</span><h3 class="guide-card-title">题库是可选的，且需要自备</h3></div><p class="guide-copy">本脚本<strong>不提供题库，也不推荐任何题库服务商</strong>，请自行准备。若你已有自己的题库接口，把接口地址和密钥填到「答题」页即可；没有就留空，只用大模型答题。自有题库需实现 <strong>POST {地址}/api/open/v1/search/exact</strong>，请求体 <strong>{stem, options, type}</strong>，返回 <strong>{success, data, error, meta}</strong>，密钥放在 <strong>X-Consumer-Token</strong> 请求头。</p></li><li class="guide-card"><div class="guide-card-heading"><span class="guide-number" aria-hidden="true">03</span><h3 class="guide-card-title">使用须知</h3></div><p class="guide-copy">请只使用新版脚本，不要和其它同类脚本同时开启（会互相抢页面）。答题间隔、正确率阈值、大模型参数都在「设置」页；出错先看「首页」日志，日志会写明失败原因。</p></li></ol>', 2);
+  const _hoisted_2$2 = /* @__PURE__ */ vue.createStaticVNode('<header class="guide-header"><div class="guide-heading-row"><h2 class="guide-title">使用教程</h2><span class="guide-tag">脚本免费</span></div><p class="guide-subtitle">配置一次，之后打开对应页面就会自动答题。</p></header><ol class="guide-list"><li class="guide-card"><div class="guide-card-heading"><span class="guide-number" aria-hidden="true">01</span><h3 class="guide-card-title">推荐：用大模型答题</h3></div><p class="guide-copy">在「设置」页最下方的「大模型答题设置」里填好接口地址、API 密钥和模型名称，就能让大模型直接作答。接口需要兼容 OpenAI 的 <strong>/chat/completions</strong> 协议（DeepSeek、通义千问、Kimi、智谱、硅基流动等都支持）。填好后点「测试大模型连接」可以验证配置是否正确。答题时选择题会按「B. 选项内容」的形式明确给出选项，判断题给出「对」或「错」。不确定有哪些模型时，点「模型名称」下面的「从接口获取模型列表」，会从这个接口地址拉取可用模型供你选择。</p></li><li class="guide-card"><div class="guide-card-heading"><span class="guide-number" aria-hidden="true">02</span><h3 class="guide-card-title">题库是可选的，且需要自备</h3></div><p class="guide-copy">本脚本<strong>不提供题库，也不推荐任何题库服务商</strong>，请自行准备。若你已有自己的题库接口，把接口地址和密钥填到「答题」页即可；没有就留空，只用大模型答题。自有题库需实现 <strong>POST {地址}/api/open/v1/search/exact</strong>，请求体 <strong>{stem, options, type}</strong>，返回 <strong>{success, data, error, meta}</strong>，密钥放在 <strong>X-Consumer-Token</strong> 请求头。</p></li><li class="guide-card"><div class="guide-card-heading"><span class="guide-number" aria-hidden="true">03</span><h3 class="guide-card-title">使用须知</h3></div><p class="guide-copy">请只使用新版脚本，不要和其它同类脚本同时开启（会互相抢页面）。答题间隔、正确率阈值、大模型参数都在「设置」页；出错先看「首页」日志，日志会写明失败原因。</p></li></ol>', 2);
   const _hoisted_4$1 = [
     _hoisted_2$2
   ];
@@ -7100,7 +7230,7 @@
     return GM_addStyle(t), t;
   };
   cssLoader("ElementPlus");
-  const layoutCss = '.main-page .guide-page{box-sizing:border-box;max-height:min(400px,calc(100vh - 160px));max-height:min(400px,calc(100dvh - 160px));overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;padding:2px 4px 2px 0;color:#4e5969;font-size:12px;line-height:1.7;scrollbar-width:thin;scrollbar-color:#c7d7eb transparent}.main-page .guide-page:focus-visible{outline:2px solid #176ae5;outline-offset:2px;border-radius:8px}.main-page .guide-header{margin:0 0 10px;padding:11px 12px;border:1px solid #d9e8fc;border-radius:9px;background:linear-gradient(120deg,#edf5ff 0%,#f8fbff 100%)}.main-page .guide-heading-row{display:flex;align-items:center;justify-content:space-between;gap:8px}.main-page .guide-title{margin:0;color:#174b94;font-size:13px;font-weight:600;line-height:1.6}.main-page .guide-tag{flex-shrink:0;padding:1px 7px;border:1px solid #d4e5fc;border-radius:20px;background-color:#fff;color:#2262b5;font-size:10px;line-height:18px}.main-page .guide-subtitle{margin:3px 0 0;color:#61758e;font-size:11px}.main-page .guide-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}.main-page .guide-card{min-width:0;padding:10px;border:1px solid #e4eaf2;border-radius:8px;background-color:#fff}.main-page .guide-card-heading{display:flex;align-items:center;gap:8px;margin-bottom:6px}.main-page .guide-number{display:inline-flex;align-items:center;justify-content:center;flex:0 0 24px;height:24px;border-radius:7px;background-color:#eaf3ff;color:#176ae5;font-size:11px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums}.main-page .guide-card-title{margin:0;color:#263a55;font-size:12px;font-weight:600;line-height:1.6}.main-page .guide-copy{margin:0;overflow-wrap:anywhere}.main-page .guide-flow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin:10px 0 0;padding:9px 4px 7px;border-radius:7px;background-color:#f3f7fd;list-style:none}.main-page .guide-flow-step{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;color:#3a5a83;font-size:10px;line-height:18px;text-align:center}.main-page .guide-flow-step+.guide-flow-step:before{position:absolute;top:8px;left:-5px;width:5px;height:5px;border-top:1px solid #9cb8da;border-right:1px solid #9cb8da;content:"";transform:rotate(45deg)}.main-page .guide-flow-number{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid #d5e4f8;border-radius:50%;background-color:#fff;color:#176ae5;font-size:11px;font-weight:600;line-height:1}.main-page{--app-font-family: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";--el-font-family: var(--app-font-family);z-index:100003;position:fixed;color:#1f2329;font-family:var(--app-font-family)!important;font-size:14px;line-height:1.5715;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}.main-page *,.main-page input,.main-page button,.main-page textarea{font-family:var(--app-font-family)!important;letter-spacing:0}.main-page .el-card,.main-page .el-tabs,.main-page .el-text,.main-page .el-button,.main-page .el-input,.main-page .el-input__inner,.main-page .el-input-number,.main-page .el-table{font-family:var(--app-font-family)!important}.main-page .overlay{position:fixed;top:0;left:0;right:0;bottom:0;z-index:1001}.main-page .el-card{border:0}.main-page .card-header{display:flex;justify-content:space-between;flex-direction:row;align-items:center;margin:0;padding:0;cursor:move}.main-page .card-header .title{font-size:14px;display:flex;align-items:center;justify-content:center;font-weight:500}.main-page .warning-icon{margin-left:5px}.main-page .zoom-icon{cursor:pointer}.main-page .zoom-icon.is-spaced{margin-left:8px}.main-page .minus{margin:5px 10px -10px 0}.main-page .compact-divider{margin:0}.main-page .demo-tabs{display:initial}.main-page .el-card__header{background-color:#1f71e0;color:#fff;padding:7px 10px 7px 16px;margin:0}.main-page .el-card__body{padding:0 16px 20px}.main-page .el-tabs__nav-wrap:after{height:1px}.main-page .el-tabs__active-bar{background-color:#176ae5}.main-page .el-tabs__item{font-size:13px;height:34px}.main-page .el-tabs__item.is-top{font-weight:400;color:#4e5969;padding:0 8px 0 12px}.main-page .el-tabs__item.is-active{font-weight:500;color:#176ae5;padding:0 8px 0 12px}.main-page .script-home{padding-top:2px}.main-page .log .el-text{font-weight:400;white-space:normal}.main-page .log-time{font-weight:400}.main-page .log-action-link{color:#176ae5;cursor:pointer;text-decoration:none}.main-page .log-action-link:hover{color:#409eff;text-decoration:underline}.main-page .log-divider{margin:0}.main-page .token-input,.main-page .question-list{font-size:12px}.main-page .token-label{border-radius:0}.main-page .question_table{width:625px}.main-page .answer-legend{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;padding:10px 2px 8px;font-size:11px;line-height:18px}.main-page .answer-legend>span{display:inline-flex;align-items:center;gap:5px}.main-page .answer-legend>span:before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}.main-page .answer-result{line-height:1.7;overflow-wrap:anywhere}.main-page .answer-result--success{color:#15803d}.main-page .answer-result--searching{color:#a15c08}.main-page .answer-result--pending{color:#697586}.main-page .answer-result--error{color:#c73e38}.main-page .setting{margin-top:-8px;font-size:14px}.main-page .setting-section-title{font-size:13px}.main-page .setting-checkbox{margin-bottom:6px}.main-page .setting-number{margin-top:6px}.main-page .setting .el-form-item{margin-bottom:0}.main-page{display:flex;flex-direction:column;max-height:calc(100vh - var(--cx-panel-top, 0px) - 8px);max-height:calc(100dvh - var(--cx-panel-top, 0px) - 8px)}.main-page>.el-card{display:flex;flex-direction:column;max-height:calc(100vh - var(--cx-panel-top, 0px) - 8px);max-height:calc(100dvh - var(--cx-panel-top, 0px) - 8px);overflow:hidden}.main-page .el-card__header{flex:0 0 auto}.main-page .el-card__body{flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#c7d7eb transparent}.main-page .el-card__body::-webkit-scrollbar{width:8px;height:8px}.main-page .el-card__body::-webkit-scrollbar-track{background-color:transparent}.main-page .el-card__body::-webkit-scrollbar-thumb{border-radius:4px;background-color:#c7d7eb}.main-page .el-card__body::-webkit-scrollbar-thumb:hover{background-color:#a9c0dc}.main-page .guide-page{max-height:none;overflow:visible;overscroll-behavior:auto}.main-page .setting-hint{margin:2px 0 4px;color:#8a94a6;font-size:11px;line-height:1.6;word-break:break-word}\n';
+  const layoutCss = '.main-page .guide-page{box-sizing:border-box;max-height:min(400px,calc(100vh - 160px));max-height:min(400px,calc(100dvh - 160px));overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;padding:2px 4px 2px 0;color:#4e5969;font-size:12px;line-height:1.7;scrollbar-width:thin;scrollbar-color:#c7d7eb transparent}.main-page .guide-page:focus-visible{outline:2px solid #176ae5;outline-offset:2px;border-radius:8px}.main-page .guide-header{margin:0 0 10px;padding:11px 12px;border:1px solid #d9e8fc;border-radius:9px;background:linear-gradient(120deg,#edf5ff 0%,#f8fbff 100%)}.main-page .guide-heading-row{display:flex;align-items:center;justify-content:space-between;gap:8px}.main-page .guide-title{margin:0;color:#174b94;font-size:13px;font-weight:600;line-height:1.6}.main-page .guide-tag{flex-shrink:0;padding:1px 7px;border:1px solid #d4e5fc;border-radius:20px;background-color:#fff;color:#2262b5;font-size:10px;line-height:18px}.main-page .guide-subtitle{margin:3px 0 0;color:#61758e;font-size:11px}.main-page .guide-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}.main-page .guide-card{min-width:0;padding:10px;border:1px solid #e4eaf2;border-radius:8px;background-color:#fff}.main-page .guide-card-heading{display:flex;align-items:center;gap:8px;margin-bottom:6px}.main-page .guide-number{display:inline-flex;align-items:center;justify-content:center;flex:0 0 24px;height:24px;border-radius:7px;background-color:#eaf3ff;color:#176ae5;font-size:11px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums}.main-page .guide-card-title{margin:0;color:#263a55;font-size:12px;font-weight:600;line-height:1.6}.main-page .guide-copy{margin:0;overflow-wrap:anywhere}.main-page .guide-flow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin:10px 0 0;padding:9px 4px 7px;border-radius:7px;background-color:#f3f7fd;list-style:none}.main-page .guide-flow-step{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;color:#3a5a83;font-size:10px;line-height:18px;text-align:center}.main-page .guide-flow-step+.guide-flow-step:before{position:absolute;top:8px;left:-5px;width:5px;height:5px;border-top:1px solid #9cb8da;border-right:1px solid #9cb8da;content:"";transform:rotate(45deg)}.main-page .guide-flow-number{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid #d5e4f8;border-radius:50%;background-color:#fff;color:#176ae5;font-size:11px;font-weight:600;line-height:1}.main-page{--app-font-family: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";--el-font-family: var(--app-font-family);z-index:100003;position:fixed;color:#1f2329;font-family:var(--app-font-family)!important;font-size:14px;line-height:1.5715;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}.main-page *,.main-page input,.main-page button,.main-page textarea{font-family:var(--app-font-family)!important;letter-spacing:0}.main-page .el-card,.main-page .el-tabs,.main-page .el-text,.main-page .el-button,.main-page .el-input,.main-page .el-input__inner,.main-page .el-input-number,.main-page .el-table{font-family:var(--app-font-family)!important}.main-page .overlay{position:fixed;top:0;left:0;right:0;bottom:0;z-index:1001}.main-page .el-card{border:0}.main-page .card-header{display:flex;justify-content:space-between;flex-direction:row;align-items:center;margin:0;padding:0;cursor:move}.main-page .card-header .title{font-size:14px;display:flex;align-items:center;justify-content:center;font-weight:500}.main-page .warning-icon{margin-left:5px}.main-page .zoom-icon{cursor:pointer}.main-page .zoom-icon.is-spaced{margin-left:8px}.main-page .minus{margin:5px 10px -10px 0}.main-page .compact-divider{margin:0}.main-page .demo-tabs{display:initial}.main-page .el-card__header{background-color:#1f71e0;color:#fff;padding:7px 10px 7px 16px;margin:0}.main-page .el-card__body{padding:0 16px 20px}.main-page .el-tabs__nav-wrap:after{height:1px}.main-page .el-tabs__active-bar{background-color:#176ae5}.main-page .el-tabs__item{font-size:13px;height:34px}.main-page .el-tabs__item.is-top{font-weight:400;color:#4e5969;padding:0 8px 0 12px}.main-page .el-tabs__item.is-active{font-weight:500;color:#176ae5;padding:0 8px 0 12px}.main-page .script-home{padding-top:2px}.main-page .log .el-text{font-weight:400;white-space:normal}.main-page .log-time{font-weight:400}.main-page .log-action-link{color:#176ae5;cursor:pointer;text-decoration:none}.main-page .log-action-link:hover{color:#409eff;text-decoration:underline}.main-page .log-divider{margin:0}.main-page .token-input,.main-page .question-list{font-size:12px}.main-page .token-label{border-radius:0}.main-page .question_table{width:625px}.main-page .answer-legend{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;padding:10px 2px 8px;font-size:11px;line-height:18px}.main-page .answer-legend>span{display:inline-flex;align-items:center;gap:5px}.main-page .answer-legend>span:before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}.main-page .answer-result{line-height:1.7;overflow-wrap:anywhere}.main-page .answer-result--success{color:#15803d}.main-page .answer-result--searching{color:#a15c08}.main-page .answer-result--pending{color:#697586}.main-page .answer-result--error{color:#c73e38}.main-page .setting{margin-top:-8px;font-size:14px}.main-page .setting-section-title{font-size:13px}.main-page .setting-checkbox{margin-bottom:6px}.main-page .setting-number{margin-top:6px}.main-page .setting .el-form-item{margin-bottom:0}.main-page{display:flex;flex-direction:column;max-height:calc(100vh - var(--cx-panel-top, 0px) - 8px);max-height:calc(100dvh - var(--cx-panel-top, 0px) - 8px)}.main-page>.el-card{display:flex;flex-direction:column;max-height:calc(100vh - var(--cx-panel-top, 0px) - 8px);max-height:calc(100dvh - var(--cx-panel-top, 0px) - 8px);overflow:hidden}.main-page .el-card__header{flex:0 0 auto}.main-page .el-card__body{flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#c7d7eb transparent}.main-page .el-card__body::-webkit-scrollbar{width:8px;height:8px}.main-page .el-card__body::-webkit-scrollbar-track{background-color:transparent}.main-page .el-card__body::-webkit-scrollbar-thumb{border-radius:4px;background-color:#c7d7eb}.main-page .el-card__body::-webkit-scrollbar-thumb:hover{background-color:#a9c0dc}.main-page .guide-page{max-height:none;overflow:visible;overscroll-behavior:auto}.main-page .setting-model{display:flex;flex-direction:column;gap:6px;margin-top:6px}.main-page .setting-model .el-button{align-self:flex-start;}.main-page .setting-hint{margin:2px 0 4px;color:#8a94a6;font-size:11px;line-height:1.6;word-break:break-word}\n';
   const hookWebpack = () => {
     let originCall = _unsafeWindow.Function.prototype.call;
     _unsafeWindow.Function.prototype.call = function(...args) {
