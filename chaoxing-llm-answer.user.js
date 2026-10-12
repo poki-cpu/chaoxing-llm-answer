@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         🥇超星学习通｜知到智慧树--网课小助手（大模型答题版）
 // @namespace    noshuang
-// @version      0.4.1
+// @version      0.5.0
 // @author       isMobile
-// @description  🫧 目前已经支持的平台：【超星学习通「功能基本完成」】【知到智慧树「目前只支持答题」】。🚀 目前已经具有的功能包括：▶️视频自动观看，跳转下一个任务点，📄章节测试、作业自动完成，无答案自动保存，💯考试自动完成，自动切换、保存。使用脚本请进入对应平台的页面。📚 脚本不内置题库、也不推荐题库服务商：题库接口需自带（在「答题」页填地址和密钥），没有题库可以直接用大模型答题。🤖 新增大模型答题：在「设置 - 大模型答题设置」里填好接口地址、API 密钥和模型名称，即可让大模型自动作答（支持 OpenAI 兼容接口，如 DeepSeek、通义千问、Kimi、智谱、硅基流动等）。
+// @description  🫧 目前已经支持的平台：【超星学习通「功能基本完成」】【知到智慧树「目前只支持答题」】。🚀 目前已经具有的功能包括：▶️视频自动观看，跳转下一个任务点，📄章节测试、作业自动完成，无答案自动保存，💯考试自动完成，自动切换、保存。使用脚本请进入对应平台的页面。📚 脚本不内置题库、也不推荐题库服务商：题库接口需自带（在「答题」页填地址和密钥），没有题库可以直接用大模型答题。🤖 新增大模型答题：在「设置 - 大模型答题设置」里填好接口地址、API 密钥和模型名称，即可让大模型自动作答（支持 OpenAI 兼容接口，如 DeepSeek、通义千问、Kimi、智谱、硅基流动等）。✍️ 选择题答案会明确标出该选 A、B、C、D 中的哪一个选项，判断题给出「对」或「错」。
 // @license      MIT
 // @homepageURL  https://github.com/poki-cpu/chaoxing-llm-answer
 // @supportURL   https://github.com/poki-cpu/chaoxing-llm-answer/issues
@@ -516,11 +516,12 @@
     "只输出一个 JSON 对象，不要输出解释、Markdown 代码块或任何多余文字。",
     '固定输出格式：{"answers": ["答案1", "答案2"]}',
     "作答规则：",
-    '1. 单选题只给一个选项字母，例如 {"answers": ["B"]}；多选题按字母升序给出全部正确选项，例如 {"answers": ["A", "C"]}。',
-    '2. 判断题只给 "对" 或 "错"。',
-    "3. 填空题按空位顺序给出每个空的答案，有几个空就给几个元素。",
-    "4. 简答题给出完整答案文本，作为数组的第一个元素。",
-    "5. 即使不确定也要给出最可能的答案，绝对不要返回空数组。"
+    "1. 选择题（单选、多选）的选项已按顺序编号为 A、B、C、D…，必须只回答选项字母，不要回答选项内容，也不要附加任何其它文字。",
+    '2. 单选题只给一个字母，例如 {"answers": ["B"]}；多选题按字母升序给出全部正确选项，例如 {"answers": ["A", "C"]}。',
+    '3. 判断题只给 "对" 或 "错"，不要用字母回答。',
+    "4. 填空题按空位顺序给出每个空的答案，有几个空就给几个元素。",
+    "5. 简答题给出完整答案文本，作为数组的第一个元素。",
+    "6. 即使不确定也要给出最可能的答案，绝对不要返回空数组。"
   ].join("\n");
   const isChoiceQuestionType = (type) => ["0", "1", "单选题", "多选题"].includes(type);
   const isJudgementQuestionType = (type) => ["3", "判断题"].includes(type);
@@ -548,15 +549,17 @@
     const type = String(question?.type ?? "");
     const stem = question?.searchText?.stem ?? question?.title ?? "";
     const options = question?.optionsText ?? question?.searchText?.options ?? [];
+    const optionCount = Array.isArray(options) ? options.length : 0;
     const lines = [`题型：${LLM_QUESTION_TYPE_LABELS[type] || type || "未知"}`, `题目：${stem}`];
-    if (Array.isArray(options) && options.length) {
+    if (optionCount) {
       lines.push("选项：");
       options.forEach((option, index) => lines.push(`${String.fromCharCode(65 + index)}. ${option}`));
     }
     if (isChoiceQuestionType(type)) {
-      lines.push('请只返回正确选项的字母，例如 {"answers": ["B"]} 或 {"answers": ["A", "C"]}。');
+      lines.push(optionCount ? `本题是选择题，选项编号为 A~${String.fromCharCode(65 + optionCount - 1)}，请从这些编号里选。` : "本题是选择题，请按选项顺序用 A、B、C、D 作答。");
+      lines.push('只回答正确选项的字母，例如 {"answers": ["B"]}；多选题按字母升序给出全部正确选项，例如 {"answers": ["A", "C"]}。');
     } else if (isJudgementQuestionType(type)) {
-      lines.push('请只返回 "对" 或 "错"，例如 {"answers": ["对"]}。');
+      lines.push('本题是判断题，只回答 "对" 或 "错"，例如 {"answers": ["对"]}。');
     } else {
       lines.push("请按题意或空位顺序给出答案文本。");
     }
@@ -592,14 +595,88 @@
     const plain = withoutFence.replace(/^["'`]+|["'`]+$/g, "").trim();
     return plain && plain.length <= 60 ? { answers: [plain] } : null;
   };
+  const toAsciiOptionLetters = (value) => String(value ?? "").replace(/[\uFF21-\uFF3A\uFF41-\uFF5A]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 65248));
+  const splitOptionLetters = (text) => Array.from(new Set(String(text ?? "").toUpperCase().match(/[A-Z]/g) || []));
   const extractOptionLetters = (value) => {
-    const text = String(value ?? "").trim();
+    const text = toAsciiOptionLetters(value).replace(/\u3000/g, " ").trim();
     if (!text)
       return [];
-    if (/^[A-Za-z](?:\s*[,，、;；\/|]?\s*[A-Za-z])*$/.test(text))
-      return text.toUpperCase().replace(/[^A-Z]/g, "").split("");
-    const prefixed = text.match(/^\s*([A-Za-z])\s*[.．、:：)）]/);
-    return prefixed ? [prefixed[1].toUpperCase()] : [];
+    const upper = text.toUpperCase();
+    if (/^[A-Z](?:[\s,，、;；\/|和与或]*[A-Z])*$/.test(upper))
+      return splitOptionLetters(upper);
+    const labelled = upper.match(/(?:正确答案|答案|正确选项|应选|选择|选项|选)\s*(?:是|为|[:：=])?\s*([A-Z][A-Z\s,，、;；\/|和与或]*)/);
+    if (labelled) {
+      const letters = splitOptionLetters(labelled[1].split(/[^A-Z\s,，、;；\/|和与或]/)[0]);
+      if (letters.length)
+        return letters;
+    }
+    const prefixed = upper.match(/^[\s（(\[【]*([A-Z])\s*[)）\]】.．、,，:：]/);
+    return prefixed ? [prefixed[1]] : [];
+  };
+  const stripOptionLabelPrefix = (text) => String(text ?? "").replace(/^\s*[A-Za-z]\s*[.．、,，:：)）\]】]\s*/, "").trim();
+  const normalizeOptionForMatch = (text) => stripOptionLabelPrefix(String(text ?? "").replace(/<[^>]*>/g, "")).replace(/&[a-z]+;/gi, "").replace(/[\s\u00a0]+/g, "").replace(/[,.，。、：:；;？！!?'"“”‘’「」【】《》（）()\[\]{}<>·…—\-_\/\\|]/g, "").toLowerCase();
+  const getOptionSimilarity = (left, right) => {
+    if (!left || !right)
+      return 0;
+    if (left === right)
+      return 100;
+    const leftChars = Array.from(left);
+    const rightChars = Array.from(right);
+    const distances = Array.from({ length: leftChars.length + 1 }, (_, index) => index);
+    rightChars.forEach((rightChar, rightIndex) => {
+      let previous = distances[0];
+      distances[0] = rightIndex + 1;
+      leftChars.forEach((leftChar, leftIndex) => {
+        const current = distances[leftIndex + 1];
+        distances[leftIndex + 1] = leftChar === rightChar ? previous : Math.min(previous, distances[leftIndex], current) + 1;
+        previous = current;
+      });
+    });
+    const maxLength = Math.max(leftChars.length, rightChars.length);
+    return maxLength ? (1 - distances[leftChars.length] / maxLength) * 100 : 0;
+  };
+  const findOptionIndexByText = (optionsText, value) => {
+    const target = normalizeOptionForMatch(value);
+    if (!target)
+      return null;
+    let bestIndex = null;
+    let bestScore = 0;
+    optionsText.forEach((option, index) => {
+      const optionText = normalizeOptionForMatch(option);
+      if (!optionText)
+        return;
+      let score = getOptionSimilarity(optionText, target);
+      if (optionText === target)
+        score = 100;
+      else if (target.length >= 2 && optionText.length >= 2 && (optionText.includes(target) || target.includes(optionText)))
+        score = Math.max(score, 90);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    });
+    return bestScore >= 80 ? bestIndex : null;
+  };
+  const resolveChoiceOptionIndexes = (optionsText, value) => {
+    if (!Array.isArray(optionsText) || !optionsText.length)
+      return [];
+    const letterIndexes = extractOptionLetters(value).map((letter) => letter.charCodeAt(0) - 65).filter((index) => index >= 0 && index < optionsText.length);
+    if (letterIndexes.length)
+      return Array.from(new Set(letterIndexes));
+    const matched = findOptionIndexByText(optionsText, value);
+    return matched === null ? [] : [matched];
+  };
+  const formatChoiceOption = (index, optionText) => {
+    const letter = String.fromCharCode(65 + index);
+    const text = stripOptionLabelPrefix(optionText);
+    return text ? `${letter}. ${text}` : letter;
+  };
+  const formatAnswerLabel = (values) => {
+    const list = (Array.isArray(values) ? values : []).map((value) => String(value ?? "").trim()).filter(Boolean);
+    if (!list.length)
+      return "";
+    const text = list.join("；").replace(/\s+/g, " ");
+    return Array.from(text).length > 60 ? `${Array.from(text).slice(0, 60).join("")}…` : text;
   };
   const normalizeJudgementAnswer = (value) => {
     const text = String(value ?? "").trim();
@@ -611,6 +688,17 @@
       return "对";
     return text;
   };
+  const normalizeJudgementAnswerStrict = (value) => {
+    const text = toAsciiOptionLetters(value).replace(/[\s\u3000,.，。、：:；;!！?？'"“”‘’（）()\[\]【】《》]/g, "").toLowerCase();
+    const length = Array.from(text).length;
+    if (!length || length > 8)
+      return "";
+    if (/^(对|正确|是|真|√|✓|t|true|right|yes)$/.test(text))
+      return "对";
+    if (/^(错|错误|不正确|不对|否|假|×|✗|f|false|wrong|no)$/.test(text))
+      return "错";
+    return "";
+  };
   const toLlmAnswerValues = (question, parsed) => {
     const type = String(question?.type ?? "");
     const optionsText = Array.isArray(question?.optionsText) ? question.optionsText : [];
@@ -619,24 +707,28 @@
     if (!values.length)
       return null;
     if (isChoiceQuestionType(type)) {
-      const mapped = [];
+      const indexes = [];
       values.forEach((value) => {
-        const indexes = extractOptionLetters(value).map((letter) => letter.charCodeAt(0) - 65);
-        if (indexes.length && indexes.every((index) => optionsText[index] !== void 0)) {
-          indexes.forEach((index) => mapped.push(optionsText[index]));
-          return;
-        }
-        mapped.push(value);
+        resolveChoiceOptionIndexes(optionsText, value).forEach((index) => {
+          if (!indexes.includes(index))
+            indexes.push(index);
+        });
       });
-      return mapped.length ? Array.from(new Set(mapped)) : null;
+      if (indexes.length) {
+        indexes.sort((left, right) => left - right);
+        return indexes.map((index) => formatChoiceOption(index, optionsText[index]));
+      }
+      return Array.from(new Set(values));
     }
     if (isJudgementQuestionType(type)) {
-      const normalized = normalizeJudgementAnswer(values[0]);
-      if (normalized === "对" || normalized === "错")
-        return [normalized];
-      const indexes = extractOptionLetters(values[0]).map((letter) => letter.charCodeAt(0) - 65);
-      const mapped = indexes.map((index) => normalizeJudgementAnswer(optionsText[index])).find((value2) => value2 === "对" || value2 === "错");
-      return [mapped || normalized];
+      const strict = normalizeJudgementAnswerStrict(values[0]);
+      if (strict)
+        return [strict];
+      const mapped = resolveChoiceOptionIndexes(optionsText, values[0]).map((index) => normalizeJudgementAnswer(optionsText[index])).find((value2) => value2 === "对" || value2 === "错");
+      if (mapped)
+        return [mapped];
+      const loose = normalizeJudgementAnswer(values[0]);
+      return [loose === "对" || loose === "错" ? loose : values[0]];
     }
     return values;
   };
@@ -1274,7 +1366,7 @@
     "aria-label": "使用教程",
     tabindex: "0"
   };
-  const _hoisted_2$2 = /* @__PURE__ */ vue.createStaticVNode('<header class="guide-header"><div class="guide-heading-row"><h2 class="guide-title">使用教程</h2><span class="guide-tag">脚本免费</span></div><p class="guide-subtitle">配置一次，之后打开对应页面就会自动答题。</p></header><ol class="guide-list"><li class="guide-card"><div class="guide-card-heading"><span class="guide-number" aria-hidden="true">01</span><h3 class="guide-card-title">推荐：用大模型答题</h3></div><p class="guide-copy">在「设置」页最下方的「大模型答题设置」里填好接口地址、API 密钥和模型名称，就能让大模型直接作答。接口需要兼容 OpenAI 的 <strong>/chat/completions</strong> 协议（DeepSeek、通义千问、Kimi、智谱、硅基流动等都支持）。填好后点「测试大模型连接」可以验证配置是否正确。</p></li><li class="guide-card"><div class="guide-card-heading"><span class="guide-number" aria-hidden="true">02</span><h3 class="guide-card-title">题库是可选的，且需要自备</h3></div><p class="guide-copy">本脚本<strong>不提供题库，也不推荐任何题库服务商</strong>，请自行准备。若你已有自己的题库接口，把接口地址和密钥填到「答题」页即可；没有就留空，只用大模型答题。自有题库需实现 <strong>POST {地址}/api/open/v1/search/exact</strong>，请求体 <strong>{stem, options, type}</strong>，返回 <strong>{success, data, error, meta}</strong>，密钥放在 <strong>X-Consumer-Token</strong> 请求头。</p></li><li class="guide-card"><div class="guide-card-heading"><span class="guide-number" aria-hidden="true">03</span><h3 class="guide-card-title">使用须知</h3></div><p class="guide-copy">请只使用新版脚本，不要和其它同类脚本同时开启（会互相抢页面）。答题间隔、正确率阈值、大模型参数都在「设置」页；出错先看「首页」日志，日志会写明失败原因。</p></li></ol>', 2);
+  const _hoisted_2$2 = /* @__PURE__ */ vue.createStaticVNode('<header class="guide-header"><div class="guide-heading-row"><h2 class="guide-title">使用教程</h2><span class="guide-tag">脚本免费</span></div><p class="guide-subtitle">配置一次，之后打开对应页面就会自动答题。</p></header><ol class="guide-list"><li class="guide-card"><div class="guide-card-heading"><span class="guide-number" aria-hidden="true">01</span><h3 class="guide-card-title">推荐：用大模型答题</h3></div><p class="guide-copy">在「设置」页最下方的「大模型答题设置」里填好接口地址、API 密钥和模型名称，就能让大模型直接作答。接口需要兼容 OpenAI 的 <strong>/chat/completions</strong> 协议（DeepSeek、通义千问、Kimi、智谱、硅基流动等都支持）。填好后点「测试大模型连接」可以验证配置是否正确。答题时选择题会按「B. 选项内容」的形式明确给出选项，判断题给出「对」或「错」。</p></li><li class="guide-card"><div class="guide-card-heading"><span class="guide-number" aria-hidden="true">02</span><h3 class="guide-card-title">题库是可选的，且需要自备</h3></div><p class="guide-copy">本脚本<strong>不提供题库，也不推荐任何题库服务商</strong>，请自行准备。若你已有自己的题库接口，把接口地址和密钥填到「答题」页即可；没有就留空，只用大模型答题。自有题库需实现 <strong>POST {地址}/api/open/v1/search/exact</strong>，请求体 <strong>{stem, options, type}</strong>，返回 <strong>{success, data, error, meta}</strong>，密钥放在 <strong>X-Consumer-Token</strong> 请求头。</p></li><li class="guide-card"><div class="guide-card-heading"><span class="guide-number" aria-hidden="true">03</span><h3 class="guide-card-title">使用须知</h3></div><p class="guide-copy">请只使用新版脚本，不要和其它同类脚本同时开启（会互相抢页面）。答题间隔、正确率阈值、大模型参数都在「设置」页；出错先看「首页」日志，日志会写明失败原因。</p></li></ol>', 2);
   const _hoisted_4$1 = [
     _hoisted_2$2
   ];
@@ -5865,7 +5957,7 @@
               this.fillQuestion(question);
               const llmSource = ((_a = answerData.meta) == null ? void 0 : _a.source) === "llm";
               const llmModel = ((_b = answerData.meta) == null ? void 0 : _b.model) || "大模型";
-              this.addLog(llmSource ? `第${index + 1}道题已由大模型作答` : `第${index + 1}道题搜索成功`, "success");
+              this.addLog(llmSource ? `第${index + 1}道题已由大模型作答：${escapeLogText(formatAnswerLabel(values))}` : `第${index + 1}道题搜索成功`, "success");
               this.addLog(llmSource ? `答案来源:大模型（${llmModel}）` : `剩余次数:${String(((_a = answerData.meta) == null ? void 0 : _a.credit_remaining) ?? "未知")}`, "primary");
               this.correctNum += 1;
             } else {
@@ -6461,7 +6553,7 @@
               this.fillQuestion(question);
               const llmSource = ((_a = answerData.meta) == null ? void 0 : _a.source) === "llm";
               const llmModel = ((_b = answerData.meta) == null ? void 0 : _b.model) || "大模型";
-              this.addLog(llmSource ? `第${index + 1}道题已由大模型作答` : `第${index + 1}道题搜索成功`, "success");
+              this.addLog(llmSource ? `第${index + 1}道题已由大模型作答：${escapeLogText(formatAnswerLabel(values))}` : `第${index + 1}道题搜索成功`, "success");
               this.addLog(llmSource ? `答案来源:大模型（${llmModel}）` : `剩余次数:${String(((_a = answerData.meta) == null ? void 0 : _a.credit_remaining) ?? "未知")}`, "primary");
             } else {
               const failureReason = ((_b = answerData.error) == null ? void 0 : _b.message) || "未查询到答案";
