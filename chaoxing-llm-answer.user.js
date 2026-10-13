@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🥇超星学习通｜知到智慧树--网课小助手（大模型答题版）
 // @namespace    noshuang
-// @version      0.6.4
+// @version      0.7.0
 // @author       isMobile
 // @description  🫧 目前已经支持的平台：【超星学习通「功能基本完成」】【知到智慧树「目前只支持答题」】。🚀 目前已经具有的功能包括：▶️视频自动观看，跳转下一个任务点，📄章节测试、作业自动完成，无答案自动保存，💯考试自动完成，自动切换、保存。使用脚本请进入对应平台的页面。📚 脚本不内置题库、也不推荐题库服务商：题库接口需自带（在「答题」页填地址和密钥），没有题库可以直接用大模型答题。🤖 新增大模型答题：在「设置 - 大模型答题设置」里填好接口地址、API 密钥和模型名称，即可让大模型自动作答（支持 OpenAI 兼容接口，如 DeepSeek、通义千问、Kimi、智谱、硅基流动等）。✍️ 选择题答案会明确标出该选 A、B、C、D 中的哪一个选项，判断题给出「对」或「错」。🔎 模型名称支持一键从接口地址拉取，拉回来的模型直接点一下就填好。
 // @license      MIT
@@ -5912,6 +5912,26 @@
           return null;
         return bestScore >= this.getAnswerSimilarityThreshold() ? bestElement : null;
       });
+      __publicField(this, "extractLeadingOptionLetterIndex", (value) => {
+        const text = toAsciiOptionLetters(String(value ?? "")).trim();
+        const matched = text.match(/^([A-Za-z])\s*(?:[.．、,，:：)）\]】]|$)/);
+        if (!matched)
+          return -1;
+        return matched[1].toUpperCase().charCodeAt(0) - 65;
+      });
+      __publicField(this, "findOptionElementByLetter", (question, answer) => {
+        const index = this.extractLeadingOptionLetterIndex(answer);
+        if (index < 0)
+          return null;
+        const optionTexts = Array.isArray(question?.optionsText) ? question.optionsText : [];
+        const options = question?.options;
+        if (!options || index >= optionTexts.length)
+          return null;
+        return options[optionTexts[index]] || null;
+      });
+      __publicField(this, "resolveAnswerOptionElement", (question, answer) => {
+        return this.findOptionElementByLetter(question, answer) || this.findMatchedOption(question?.options || {}, answer);
+      });
       __publicField(this, "inferQuestionTypeByStructure", (questionElement, optionElements, optionTexts) => {
         if (this.hasCheckboxControl(questionElement, optionElements))
           return "1";
@@ -6157,13 +6177,19 @@
             const values = getAnswerValues(answerData, question);
             if (values == null ? void 0 : values.length) {
               question.answer = values;
-              question.answerStatus = "success";
-              this.fillQuestion(question);
-              const llmSource = ((_a = answerData.meta) == null ? void 0 : _a.source) === "llm";
-              const llmModel = ((_b = answerData.meta) == null ? void 0 : _b.model) || "大模型";
-              this.addLog(llmSource ? `第${index + 1}道题已由大模型作答：${escapeLogText(formatAnswerLabel(values))}` : `第${index + 1}道题搜索成功`, "success");
-              this.addLog(llmSource ? `答案来源:大模型（${llmModel}）` : `剩余次数:${String(((_a = answerData.meta) == null ? void 0 : _a.credit_remaining) ?? "未知")}`, "primary");
-              this.correctNum += 1;
+              const filled = this.fillQuestion(question);
+              const failedAnswers = filled && Array.isArray(filled.failed) ? filled.failed : [];
+              if (failedAnswers.length) {
+                question.answerStatus = "error";
+                this.addLog(`第${index + 1}道题有答案但页面上没点上：${escapeLogText(failedAnswers.slice(0, 4).join("、"))}${failedAnswers.length > 4 ? " 等" : ""}。答案是 ${escapeLogText(formatAnswerLabel(values))}，可能是页面选项与答案对不上，这题请手动确认`, "danger");
+              } else {
+                question.answerStatus = "success";
+                const llmSource = ((_a = answerData.meta) == null ? void 0 : _a.source) === "llm";
+                const llmModel = ((_b = answerData.meta) == null ? void 0 : _b.model) || "大模型";
+                this.addLog(llmSource ? `第${index + 1}道题已由大模型作答：${escapeLogText(formatAnswerLabel(values))}` : `第${index + 1}道题搜索成功`, "success");
+                this.addLog(llmSource ? `答案来源:大模型（${llmModel}）` : `剩余次数:${String(((_a = answerData.meta) == null ? void 0 : _a.credit_remaining) ?? "未知")}`, "primary");
+                this.correctNum += 1;
+              }
             } else {
               const failureReason = ((_b = answerData.error) == null ? void 0 : _b.message) || "未查询到答案";
               this.addLog(`第${index + 1}道题搜索失败：${escapeLogText(failureReason)}`, "danger");
@@ -6187,30 +6213,42 @@
         }
       });
       __publicField(this, "fillQuestion", (question) => {
-        var _a, _b;
         if (!this._window)
-          return;
+          return null;
         if (question.type === "0" || question.type === "1") {
+          const failedAnswers = [];
+          let applied = 0;
           question.answer.forEach((answer) => {
-            const optionElement = this.findMatchedOption(question.options, String(answer));
-            if (!optionElement)
+            const optionElement = this.resolveAnswerOptionElement(question, String(answer));
+            if (!optionElement) {
+              failedAnswers.push(String(answer));
               return;
-            if (["zj", "zy"].includes(this.type)) {
-              if (optionElement.getAttribute("aria-checked") === "true")
-                return;
-              optionElement == null ? void 0 : optionElement.click();
-            } else if (["ks"].includes(this.type)) {
-              if (optionElement.querySelector(".check_answer"))
-                return;
-              if (optionElement.querySelector(".check_answer_dx"))
-                return;
-              optionElement == null ? void 0 : optionElement.click();
             }
+            if (["zj", "zy"].includes(this.type)) {
+              if (optionElement.getAttribute("aria-checked") === "true") {
+                applied += 1;
+                return;
+              }
+              optionElement.click();
+              applied += 1;
+              return;
+            }
+            if (["ks"].includes(this.type)) {
+              if (optionElement.querySelector(".check_answer") || optionElement.querySelector(".check_answer_dx")) {
+                applied += 1;
+                return;
+              }
+              optionElement.click();
+              applied += 1;
+              return;
+            }
+            failedAnswers.push(String(answer));
           });
+          return { total: question.answer.length, applied, failed: failedAnswers };
         } else if (question.type === "2") {
           const textareaElements = question.element.querySelectorAll("textarea");
           if (textareaElements.length === 0)
-            return;
+            return { total: 1, applied: 0, failed: ["（页面上没找到填空输入框）"] };
           textareaElements.forEach((textareaElement, index) => {
             try {
               const ueditor = this._window.UE.getEditor(textareaElement.name);
@@ -6219,6 +6257,7 @@
               textareaElement.value = String(question.answer[index] ?? "");
             }
           });
+          return { total: 1, applied: 1, failed: [] };
         } else if (question.type === "3") {
           let answer = "true";
           if (String(question.answer[0]).match(/(^|,)(正确|是|对|√|T|ri|right|true)(,|$)/)) {
@@ -6230,28 +6269,52 @@
             "true": "对",
             "false": "错"
           };
+          let clicked = false;
           for (const key in question.options) {
+            const optionElement = question.options[key];
             if (["zj", "zy"].includes(this.type)) {
-              if ((_a = question.options[key].getAttribute("aria-label")) == null ? void 0 : _a.includes(`${trueOrFalse[answer]}选择`)) {
-                if (question.options[key].getAttribute("aria-checked") === "true")
-                  return;
-                (_b = question.options[key]) == null ? void 0 : _b.click();
+              const ariaLabel = optionElement.getAttribute("aria-label");
+              if (ariaLabel && ariaLabel.includes(`${trueOrFalse[answer]}选择`)) {
+                if (optionElement.getAttribute("aria-checked") === "true") {
+                  clicked = true;
+                  continue;
+                }
+                optionElement.click();
+                clicked = true;
               }
             } else if (["ks"].includes(this.type)) {
-              const optionElement = question.options[key].querySelector(`span[data='${answer}']`);
-              if (optionElement == null ? void 0 : optionElement.querySelector(".check_answer"))
-                return;
-              optionElement == null ? void 0 : optionElement.click();
+              const targetElement = optionElement.querySelector(`span[data='${answer}']`);
+              if (!targetElement)
+                continue;
+              if (targetElement.querySelector(".check_answer")) {
+                clicked = true;
+                continue;
+              }
+              targetElement.click();
+              clicked = true;
             }
           }
+          if (!clicked) {
+            const fallbackElement = this.resolveAnswerOptionElement(question, trueOrFalse[answer]);
+            if (fallbackElement) {
+              fallbackElement.click();
+              clicked = true;
+            }
+          }
+          return clicked ? { total: 1, applied: 1, failed: [] } : { total: 1, applied: 0, failed: [trueOrFalse[answer]] };
         } else if (question.type === "4" || question.type === "6") {
           const textareaElement = question.element.querySelector("textarea");
           if (!textareaElement)
-            return;
-          const ueditor = this._window.UE.getEditor(textareaElement.name);
-          ueditor.setContent(String(question.answer[0] ?? ""));
-        } else
-          ;
+            return { total: 1, applied: 0, failed: ["（页面上没找到答题框）"] };
+          try {
+            const ueditor = this._window.UE.getEditor(textareaElement.name);
+            ueditor.setContent(String(question.answer[0] ?? ""));
+          } catch (error) {
+            textareaElement.value = String(question.answer[0] ?? "");
+          }
+          return { total: 1, applied: 1, failed: [] };
+        }
+        return null;
       });
       this.type = type;
       if (iframe) {
@@ -6753,12 +6816,18 @@
             const values = getAnswerValues(answerData, question);
             if (values == null ? void 0 : values.length) {
               question.answer = values;
-              question.answerStatus = "success";
-              this.fillQuestion(question);
-              const llmSource = ((_a = answerData.meta) == null ? void 0 : _a.source) === "llm";
-              const llmModel = ((_b = answerData.meta) == null ? void 0 : _b.model) || "大模型";
-              this.addLog(llmSource ? `第${index + 1}道题已由大模型作答：${escapeLogText(formatAnswerLabel(values))}` : `第${index + 1}道题搜索成功`, "success");
-              this.addLog(llmSource ? `答案来源:大模型（${llmModel}）` : `剩余次数:${String(((_a = answerData.meta) == null ? void 0 : _a.credit_remaining) ?? "未知")}`, "primary");
+              const filled = this.fillQuestion(question);
+              const failedAnswers = filled && Array.isArray(filled.failed) ? filled.failed : [];
+              if (failedAnswers.length) {
+                question.answerStatus = "error";
+                this.addLog(`第${index + 1}道题有答案但页面上没点上：${escapeLogText(failedAnswers.slice(0, 4).join("、"))}${failedAnswers.length > 4 ? " 等" : ""}。答案是 ${escapeLogText(formatAnswerLabel(values))}，可能是页面选项与答案对不上，这题请手动确认`, "danger");
+              } else {
+                question.answerStatus = "success";
+                const llmSource = ((_a = answerData.meta) == null ? void 0 : _a.source) === "llm";
+                const llmModel = ((_b = answerData.meta) == null ? void 0 : _b.model) || "大模型";
+                this.addLog(llmSource ? `第${index + 1}道题已由大模型作答：${escapeLogText(formatAnswerLabel(values))}` : `第${index + 1}道题搜索成功`, "success");
+                this.addLog(llmSource ? `答案来源:大模型（${llmModel}）` : `剩余次数:${String(((_a = answerData.meta) == null ? void 0 : _a.credit_remaining) ?? "未知")}`, "primary");
+              }
             } else {
               const failureReason = ((_b = answerData.error) == null ? void 0 : _b.message) || "未查询到答案";
               this.addLog(`第${index + 1}道题搜索失败：${escapeLogText(failureReason)}`, "danger");
@@ -6778,13 +6847,20 @@
       });
       __publicField(this, "fillQuestion", (question) => {
         if (!this._window)
-          return;
+          return null;
         if (question.type === "单选题" || question.type === "多选题") {
+          const failedAnswers = [];
+          let applied = 0;
           question.answer.forEach((answer) => {
-            const optionElement = this.findMatchedOption(question.options, String(answer));
-            if (optionElement)
-              this.clickOptionIfNeeded(optionElement);
+            const optionElement = this.resolveAnswerOptionElement(question, String(answer));
+            if (!optionElement) {
+              failedAnswers.push(String(answer));
+              return;
+            }
+            this.clickOptionIfNeeded(optionElement);
+            applied += 1;
           });
+          return { total: question.answer.length, applied, failed: failedAnswers };
         } else if (question.type === "判断题") {
           let answer = "true";
           if (String(question.answer[0]).match(/(^|,)(正确|是|对|√|T|ri|right|true)(,|$)/)) {
@@ -6792,15 +6868,30 @@
           } else if (String(question.answer[0]).match(/(^|,)(错误|否|错|×|F|wr|wrong|false)(,|$)/)) {
             answer = "false";
           }
+          let clicked = false;
           for (const key in question.options) {
             if (this.normalizeJudgementText(key) === answer) {
               this.clickOptionIfNeeded(question.options[key]);
+              clicked = true;
             }
           }
+          if (!clicked) {
+            const fallbackElement = this.resolveAnswerOptionElement(question, answer === "true" ? "对" : "错");
+            if (fallbackElement) {
+              this.clickOptionIfNeeded(fallbackElement);
+              clicked = true;
+            }
+          }
+          return clicked ? { total: 1, applied: 1, failed: [] } : { total: 1, applied: 0, failed: [answer === "true" ? "对" : "错"] };
         } else if (question.type === "填空题" || question.type === "简答题") {
-          this.fillTextQuestion(question);
-        } else
-          ;
+          try {
+            this.fillTextQuestion(question);
+          } catch (error) {
+            return { total: 1, applied: 0, failed: ["（答题框填写失败）"] };
+          }
+          return { total: 1, applied: 1, failed: [] };
+        }
+        return null;
       });
     }
     extractOptions(optionElements, optionSelector) {
