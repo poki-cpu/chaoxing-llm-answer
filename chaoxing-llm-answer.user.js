@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🥇超星学习通｜知到智慧树--网课小助手（大模型答题版）
 // @namespace    noshuang
-// @version      0.6.3
+// @version      0.6.4
 // @author       isMobile
 // @description  🫧 目前已经支持的平台：【超星学习通「功能基本完成」】【知到智慧树「目前只支持答题」】。🚀 目前已经具有的功能包括：▶️视频自动观看，跳转下一个任务点，📄章节测试、作业自动完成，无答案自动保存，💯考试自动完成，自动切换、保存。使用脚本请进入对应平台的页面。📚 脚本不内置题库、也不推荐题库服务商：题库接口需自带（在「答题」页填地址和密钥），没有题库可以直接用大模型答题。🤖 新增大模型答题：在「设置 - 大模型答题设置」里填好接口地址、API 密钥和模型名称，即可让大模型自动作答（支持 OpenAI 兼容接口，如 DeepSeek、通义千问、Kimi、智谱、硅基流动等）。✍️ 选择题答案会明确标出该选 A、B、C、D 中的哪一个选项，判断题给出「对」或「错」。🔎 模型名称支持一键从接口地址拉取，拉回来的模型直接点一下就填好。
 // @license      MIT
@@ -397,7 +397,7 @@
               min: 0,
               max: 2,
               step: 0.1,
-              hint: "0~2 之间。越低回答越稳定、越保守，越高越随机。答题建议 0~0.3，默认 0.2 即可。"
+              hint: "0~2 之间。越低回答越稳定、越保守，越高越随机。答题建议 0~0.3。注意：DeepSeek V4 系列默认开启思考模式，思考模式下这个参数不生效。"
             },
             {
               name: "超时时间，单位秒",
@@ -407,6 +407,15 @@
               max: 300,
               step: 5,
               hint: "等大模型回答的最长时间，网络慢可以调大，最大 300 秒。"
+            },
+            {
+              name: "最大输出 token",
+              value: 0,
+              type: "number",
+              min: 0,
+              max: 131072,
+              step: 1024,
+              hint: "0 = 不传这个参数，交给接口自己的默认值（DeepSeek 思考模式默认 64K）。填小了会把思考链和答案一起掐断，导致答案残缺或答非所问。"
             }
           ]
         },
@@ -536,7 +545,8 @@
       apiKey: String(getLlmParam(configStore, "API 密钥")?.value || "").trim(),
       model: String(getLlmParam(configStore, "模型名称")?.value || "").trim(),
       temperature: Number(getLlmParam(configStore, "温度")?.value ?? 0.2),
-      timeout: Number(getLlmParam(configStore, "超时时间，单位秒")?.value ?? 60)
+      timeout: Number(getLlmParam(configStore, "超时时间，单位秒")?.value ?? 60),
+      maxTokens: Number(getLlmParam(configStore, "最大输出 token")?.value ?? 0)
     };
   };
   const buildLlmChatUrl = (baseUrl) => {
@@ -735,13 +745,15 @@
   const requestLlmChat = (settings, messages) => {
     const requestUrl = buildLlmChatUrl(settings.baseUrl);
     const timeoutSeconds = Math.min(300, Math.max(5, settings.timeout || 60));
+    const maxTokens = Number(settings.maxTokens);
     const payload = {
       model: settings.model,
       messages,
       temperature: Number.isFinite(settings.temperature) ? settings.temperature : 0.2,
-      max_tokens: 2048,
       stream: false
     };
+    if (Number.isFinite(maxTokens) && maxTokens > 0)
+      payload.max_tokens = Math.floor(maxTokens);
     return new Promise((resolve) => {
       if (typeof _GM_xmlhttpRequest !== "function") {
         resolve({ success: false, message: "GM_xmlhttpRequest 不可用：脚本猫没有给本脚本跨域权限，请重新安装脚本并同意跨域授权" });
@@ -773,14 +785,20 @@
               return;
             }
             const choice = body?.choices?.[0];
+            const finishReason = String(choice?.finish_reason ?? "");
+            const truncated = finishReason === "length";
             const content = choice?.message?.content ?? choice?.text ?? "";
             if (String(content).trim()) {
-              finish({ success: true, content: String(content) });
+              finish({ success: true, content: String(content), truncated });
+              return;
+            }
+            if (truncated) {
+              finish({ success: false, message: `输出被截断（finish_reason=length）：${maxTokens > 0 ? `max_tokens=${maxTokens} 太小` : "接口给的最大输出太小"}，模型只生成了思考过程、没给出最终答案。请把「最大输出 token」设为 0 或调大后重试` });
               return;
             }
             const reasoning = choice?.message?.reasoning_content ?? "";
             if (String(reasoning).trim()) {
-              finish({ success: true, content: String(reasoning) });
+              finish({ success: true, content: String(reasoning), truncated: false });
               return;
             }
             finish({ success: false, message: `接口返回内容为空：${brief}` });
@@ -914,8 +932,10 @@
         return apiError(response.message);
       }
       const parsed = parseLlmAnswerJson(response.content);
-      if (!parsed)
-        return apiError(`无法解析大模型返回的答案格式：${String(response.content).replace(/\s+/g, " ").slice(0, 120)}`);
+      if (!parsed) {
+        const preview = String(response.content).replace(/\s+/g, " ").slice(0, 120);
+        return apiError(response.truncated ? `大模型的输出被 max_tokens 截断了，答案不完整，请把「最大输出 token」设为 0 或调大后重试。原文片段：${preview}` : `无法解析大模型返回的答案格式：${preview}`);
+      }
       const values = toLlmAnswerValues(question, parsed);
       if (!values || !values.length)
         return apiError("大模型没有给出可用答案");
