@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🥇超星学习通｜知到智慧树--网课小助手（大模型答题版）
 // @namespace    noshuang
-// @version      0.7.2
+// @version      0.7.3
 // @author       isMobile
 // @description  🫧 目前已经支持的平台：【超星学习通「功能基本完成」】【知到智慧树「目前只支持答题」】。🚀 目前已经具有的功能包括：▶️视频自动观看，跳转下一个任务点，📄章节测试、作业自动完成，无答案自动保存，💯考试自动完成，自动切换、保存。使用脚本请进入对应平台的页面。📚 脚本不内置题库、也不推荐题库服务商：题库接口需自带（在「答题」页填地址和密钥），没有题库可以直接用大模型答题。🤖 新增大模型答题：在「设置 - 大模型答题设置」里填好接口地址、API 密钥和模型名称，即可让大模型自动作答（支持 OpenAI 兼容接口，如 DeepSeek、通义千问、Kimi、智谱、硅基流动等）。✍️ 选择题答案会明确标出该选 A、B、C、D 中的哪一个选项，判断题给出「对」或「错」。🔎 模型名称支持一键从接口地址拉取，拉回来的模型直接点一下就填好。
 // @license      MIT
@@ -6407,6 +6407,7 @@
       logStore.addLog(`正在解析任务点，请稍等5-10秒（如果长时间没有反应，请刷新页面）`, "warning");
     };
     const configStore = useConfigStore();
+    const getChapterParam = (keyword) => configStore.platformParams.cx.parts[0].params.find((param) => String(param?.name || "").includes(keyword));
     const HOME_TAB_NAME = "0";
     const ANSWER_TAB_NAME2 = "1";
     const PDF_COMPLETION_WAIT_SECONDS = 5;
@@ -6479,7 +6480,7 @@
             var _a;
             if (thisTaskId === currentWatchIframeTaskId && context.isCurrent()) {
               logStore.addLog(`本页任务点已全部完成，正前往下一章节`, "success");
-              if (configStore.platformParams.cx.parts[0].params[1].value) {
+              if (getChapterParam("自动下一章节")?.value) {
                 const nextBtn = documentElement.querySelector("#prevNextFocusNext");
                 if (!nextBtn || nextBtn.style.display === "none") {
                   logStore.addLog(`已经到达最后一章节，无法跳转`, "danger");
@@ -6603,7 +6604,7 @@
         return;
       iframeWindow.alert = () => {
       };
-      if (configStore.platformParams.cx.parts[0].params[0].value) {
+      if (getChapterParam("章节作业自动提交")?.value) {
         logStore.addLog("自动提交已开启，尝试提交", "primary");
         if (correctRate < Number(configStore.otherParams.params[2].value)) {
           logStore.addLog(`正确率小于${configStore.otherParams.params[2].value}%，暂存`, "danger");
@@ -6705,7 +6706,7 @@
         if (iframeSrc.includes("api/work")) {
           return processWork(iframe, iframeDocument, iframeWindow, context);
         }
-        if (configStore.platformParams.cx.parts[0].params[2].value) {
+        if (getChapterParam("只答题")?.value) {
           logStore.addLog("只答题，不做其他已开启，可在设置里调整", "primary");
         } else {
           const ansJobIcon = (_b = iframe.parentElement) == null ? void 0 : _b.querySelector(".ans-job-icon");
@@ -6797,7 +6798,7 @@
     logStore.addLog("进入新版考试页面，开始准备答题", "primary");
     logStore.addLog("正在解析题目，请稍等", "warning");
     await new CxQuestionHandler("ks").init();
-    if (configStore.platformParams.cx.parts[1].params[0].value) {
+    if (configStore.platformParams.cx.parts[1].params.find((param) => String(param?.name || "").includes("自动切换"))?.value) {
       logStore.addLog("自动切换已开启，正在前往下一题", "success");
       await sleep(getAnswerInterval());
       if (clickNextStepButton()) {
