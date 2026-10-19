@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🥇超星学习通｜知到智慧树--网课小助手（大模型答题版）
 // @namespace    noshuang
-// @version      0.7.3
+// @version      0.7.4
 // @author       isMobile
 // @description  🫧 目前已经支持的平台：【超星学习通「功能基本完成」】【知到智慧树「目前只支持答题」】。🚀 目前已经具有的功能包括：▶️视频自动观看，跳转下一个任务点，📄章节测试、作业自动完成，无答案自动保存，💯考试自动完成，自动切换、保存。使用脚本请进入对应平台的页面。📚 脚本不内置题库、也不推荐题库服务商：题库接口需自带（在「答题」页填地址和密钥），没有题库可以直接用大模型答题。🤖 新增大模型答题：在「设置 - 大模型答题设置」里填好接口地址、API 密钥和模型名称，即可让大模型自动作答（支持 OpenAI 兼容接口，如 DeepSeek、通义千问、Kimi、智谱、硅基流动等）。✍️ 选择题答案会明确标出该选 A、B、C、D 中的哪一个选项，判断题给出「对」或「错」。🔎 模型名称支持一键从接口地址拉取，拉回来的模型直接点一下就填好。
 // @license      MIT
@@ -425,6 +425,15 @@
               max: 131072,
               step: 1024,
               hint: "0 = 不传这个参数，交给接口自己的默认值（DeepSeek 思考模式默认 64K）。填小了会把思考链和答案一起掐断，导致答案残缺或答非所问。"
+            },
+            {
+              name: "每题校验次数（越大越准越慢）",
+              value: 2,
+              type: "number",
+              min: 1,
+              max: 5,
+              step: 1,
+              hint: "同一题让模型答几次后取多数。1=只答一次；2=两次，若不一致会自动再问第三次；建议 2~3。次数越多越准，但耗时和费用成倍增加。"
             }
           ]
         },
@@ -925,6 +934,27 @@
     });
     return last.success ? last : { success: false, message: `${last.message}。已尝试：${tried.join(" ；")}` };
   };
+  const getLlmVoteSetting = () => {
+    const configStore = useConfigStore();
+    const param = getLlmParam(configStore, "每题校验次数");
+    const count = Number(param?.value);
+    if (!Number.isFinite(count))
+      return 2;
+    return Math.min(5, Math.max(1, Math.round(count)));
+  };
+  const pickMajorityValues = (votes) => {
+    if (!votes.length)
+      return null;
+    const counts = new Map();
+    votes.forEach((values) => {
+      const key = values.join("|");
+      const entry = counts.get(key) || { values, count: 0 };
+      entry.count += 1;
+      counts.set(key, entry);
+    });
+    const sorted = Array.from(counts.values()).sort((left, right) => right.count - left.count);
+    return sorted[0].values;
+  };
   const askLlm = async (question) => {
     try {
       const settings = getLlmSettings();
@@ -935,19 +965,44 @@
       if (!settings.model)
         return apiError("请先在「设置 - 大模型答题设置」中填写模型名称");
       const startedAt = Date.now();
-      const response = await requestLlmChat(settings, buildLlmMessages(question));
-      if (!response.success) {
-        recordLlmDebug({ action: "答题请求", model: settings.model, url: buildLlmChatUrl(settings.baseUrl), ok: false, detail: String(response.message).slice(0, 200) });
-        return apiError(response.message);
+      const voteTarget = getLlmVoteSetting();
+      const maxAttempts = voteTarget <= 1 ? 1 : voteTarget + 1;
+      const messages = buildLlmMessages(question);
+      const votes = [];
+      let lastError = "";
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        const response = await requestLlmChat(settings, messages);
+        if (!response.success) {
+          recordLlmDebug({ action: "答题请求", model: settings.model, url: buildLlmChatUrl(settings.baseUrl), ok: false, detail: String(response.message).slice(0, 200) });
+          lastError = response.message;
+          continue;
+        }
+        const parsed = parseLlmAnswerJson(response.content);
+        if (!parsed) {
+          const preview = String(response.content).replace(/\s+/g, " ").slice(0, 120);
+          lastError = response.truncated ? `大模型的输出被 max_tokens 截断了，答案不完整，请把「最大输出 token」设为 0 或调大后重试。原文片段：${preview}` : `无法解析大模型返回的答案格式：${preview}`;
+          continue;
+        }
+        const values = toLlmAnswerValues(question, parsed);
+        if (!values || !values.length) {
+          lastError = "大模型没有给出可用答案";
+          continue;
+        }
+        votes.push(values);
+        if (votes.length >= voteTarget && votes.length >= 2) {
+          const topValues = pickMajorityValues(votes);
+          const agreeCount = votes.filter((item) => item.join("|") === topValues.join("|")).length;
+          if (agreeCount > votes.length / 2)
+            break;
+        }
       }
-      const parsed = parseLlmAnswerJson(response.content);
-      if (!parsed) {
-        const preview = String(response.content).replace(/\s+/g, " ").slice(0, 120);
-        return apiError(response.truncated ? `大模型的输出被 max_tokens 截断了，答案不完整，请把「最大输出 token」设为 0 或调大后重试。原文片段：${preview}` : `无法解析大模型返回的答案格式：${preview}`);
+      if (!votes.length)
+        return apiError(lastError || "大模型没有给出可用答案");
+      const values = pickMajorityValues(votes);
+      const agreeCount = votes.filter((item) => item.join("|") === values.join("|")).length;
+      if (votes.length > 1) {
+        useLogStore().addLog(`答案校验：${agreeCount}/${votes.length} 次一致，采用 ${escapeLogText(formatAnswerLabel(values))}`, agreeCount === votes.length ? "success" : "warning");
       }
-      const values = toLlmAnswerValues(question, parsed);
-      if (!values || !values.length)
-        return apiError("大模型没有给出可用答案");
       return {
         success: true,
         data: {
@@ -961,7 +1016,9 @@
           source: "llm",
           model: settings.model,
           cost_ms: Date.now() - startedAt,
-          credit_remaining: null
+          credit_remaining: null,
+          votes: votes.length,
+          agree: agreeCount
         }
       };
     } catch (error) {
@@ -7461,8 +7518,11 @@
     });
     if (!title || !optionsText.length)
       return null;
-    const isMultiple = Boolean(root.querySelector('input[type="checkbox"]')) || /多选题/.test(String(root.textContent || ""));
-    return { root, title, optionElements, optionsText, type: isMultiple ? "1" : "0" };
+    const typeLabelElement = root.querySelector(".tkTopic_title");
+    const typeLabel = typeLabelElement ? String(typeLabelElement.textContent || "") : "";
+    const isJudgement = /判断/.test(typeLabel) || optionsText.length === 2 && optionsText.every((text) => /^(对|错|正确|错误|是|否|√|×)$/.test(String(text).trim()));
+    const isMultiple = !isJudgement && (Boolean(root.querySelector('input[type="checkbox"]')) || /多选题/.test(String(root.textContent || "")));
+    return { root, title, optionElements, optionsText, type: isJudgement ? "3" : isMultiple ? "1" : "0" };
   };
   const clickVideoQuizOption = (element) => {
     const input = element.querySelector("input");
