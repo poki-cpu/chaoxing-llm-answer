@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🥇超星学习通｜知到智慧树--网课小助手（大模型答题版）
 // @namespace    noshuang
-// @version      0.7.1
+// @version      0.7.2
 // @author       isMobile
 // @description  🫧 目前已经支持的平台：【超星学习通「功能基本完成」】【知到智慧树「目前只支持答题」】。🚀 目前已经具有的功能包括：▶️视频自动观看，跳转下一个任务点，📄章节测试、作业自动完成，无答案自动保存，💯考试自动完成，自动切换、保存。使用脚本请进入对应平台的页面。📚 脚本不内置题库、也不推荐题库服务商：题库接口需自带（在「答题」页填地址和密钥），没有题库可以直接用大模型答题。🤖 新增大模型答题：在「设置 - 大模型答题设置」里填好接口地址、API 密钥和模型名称，即可让大模型自动作答（支持 OpenAI 兼容接口，如 DeepSeek、通义千问、Kimi、智谱、硅基流动等）。✍️ 选择题答案会明确标出该选 A、B、C、D 中的哪一个选项，判断题给出「对」或「错」。🔎 模型名称支持一键从接口地址拉取，拉回来的模型直接点一下就填好。
 // @license      MIT
@@ -257,11 +257,15 @@
               {
                 name: "章节设置",
                 params: [
-                  //     {
-                  //     name: '视频速率',
-                  //     value: 1,
-                  //     type: 'number',
-                  // },
+                  {
+                    name: "视频速率（1=原速，最大 2）",
+                    value: 1,
+                    type: "number",
+                    min: 1,
+                    max: 2,
+                    step: 0.25,
+                    hint: "只对超星视频生效。平台锁倍速时会自动放弃，不会反复强改。"
+                  },
                   {
                     name: "章节作业自动提交",
                     value: true,
@@ -7544,6 +7548,71 @@
       }
     }, 900);
   };
+  const normalizeVideoRate = (value) => {
+    const rate = Number(value);
+    if (!Number.isFinite(rate) || rate <= 1)
+      return 1;
+    return Math.min(2, Math.round(rate * 4) / 4);
+  };
+  const getVideoRateSetting = () => {
+    const configStore = useConfigStore();
+    const param = configStore?.platformParams?.cx?.parts?.[0]?.params?.find((item) => String(item?.name || "").includes("视频速率"));
+    return normalizeVideoRate(param?.value);
+  };
+  const startVideoRateWatcher = () => {
+    if (window.top !== window.self)
+      return;
+    if (globalThis.__cxVideoRateWatcherStarted)
+      return;
+    globalThis.__cxVideoRateWatcherStarted = true;
+    let currentVideo = null;
+    let currentKey = "";
+    let corrections = 0;
+    let locked = false;
+    let loggedAt = 0;
+    const describeVideo = (video) => `${video.currentSrc || video.src || ""}|${Number(video.duration) || 0}`;
+    setInterval(() => {
+      const doc = findVideoModuleDocument(document);
+      if (!doc)
+        return;
+      const video = doc.querySelector("video");
+      if (!video)
+        return;
+      const key = describeVideo(video);
+      if (video !== currentVideo || key !== currentKey) {
+        currentVideo = video;
+        currentKey = key;
+        corrections = 0;
+        locked = false;
+      }
+      const rate = getVideoRateSetting();
+      if (rate <= 1) {
+        if (Math.abs(video.playbackRate - 1) > 0.01) {
+          try { video.playbackRate = 1; } catch (error) {}
+        }
+        return;
+      }
+      if (locked)
+        return;
+      if (Math.abs(video.playbackRate - rate) <= 0.01)
+        return;
+      if (corrections >= 3) {
+        locked = true;
+        useLogStore().addLog(`视频倍速被重置了 ${corrections} 次，可能被平台锁定或你手动改过；已停止强制加速`, "warning");
+        return;
+      }
+      corrections += 1;
+      try {
+        video.playbackRate = rate;
+      } catch (error) {
+        return;
+      }
+      if (corrections === 1 || Date.now() - loggedAt > 20000) {
+        loggedAt = Date.now();
+        useLogStore().addLog(`已将视频倍速调整为 ${rate}×（平台若锁倍速会自动放弃）`, "primary");
+      }
+    }, 1500);
+  };
   const BOOTSTRAP_INTERVAL = 100;
   const COMPLETE_READY_STATE = "complete";
   const ELEMENT_PLUS_STYLE_RESOURCE = "ElementPlusStyle";
@@ -7575,6 +7644,7 @@
     app.use(ElementPlus);
     app.mount(createShadowMountNode());
     startVideoQuizWatcher();
+    startVideoRateWatcher();
   };
   const timer = setInterval(() => {
     if (document.readyState !== COMPLETE_READY_STATE)
