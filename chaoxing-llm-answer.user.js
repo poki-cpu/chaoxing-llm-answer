@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🥇超星学习通｜知到智慧树--网课小助手（大模型答题版）
 // @namespace    noshuang
-// @version      0.7.6
+// @version      0.7.7
 // @author       isMobile
 // @description  🫧 目前已经支持的平台：【超星学习通「功能基本完成」】【知到智慧树「目前只支持答题」】。🚀 目前已经具有的功能包括：▶️视频自动观看，跳转下一个任务点，📄章节测试、作业自动完成，无答案自动保存，💯考试自动完成，自动切换、保存。使用脚本请进入对应平台的页面。📚 脚本不内置题库、也不推荐题库服务商：题库接口需自带（在「答题」页填地址和密钥），没有题库可以直接用大模型答题。🤖 新增大模型答题：在「设置 - 大模型答题设置」里填好接口地址、API 密钥和模型名称，即可让大模型自动作答（支持 OpenAI 兼容接口，如 DeepSeek、通义千问、Kimi、智谱、硅基流动等）。✍️ 选择题答案会明确标出该选 A、B、C、D 中的哪一个选项，判断题给出「对」或「错」。🔎 模型名称支持一键从接口地址拉取，拉回来的模型直接点一下就填好。
 // @license      MIT
@@ -344,7 +344,8 @@
             {
               name: "正确率达到多少自动提交",
               value: 85,
-              type: "number"
+              type: "number",
+              hint: "这里的「正确率」指大模型自评把握为「高」的题（题库命中也算）占比，把握为「中/低」或模型说信息不足的题不算；达不到阈值就只暂存，不把猜的答案交上去。"
             },
             {
               name: "答案相似度超过多少选择",
@@ -425,6 +426,12 @@
               max: 131072,
               step: 1024,
               hint: "0 = 不传这个参数，交给接口自己的默认值（DeepSeek 思考模式默认 64K）。填小了会把思考链和答案一起掐断，导致答案残缺或答非所问。"
+            },
+            {
+              name: "发送题目图片（识图）",
+              value: true,
+              type: "boolean",
+              hint: "题目或选项里带图片时，把图片一起发给支持识图的模型（新版 DeepSeek、GLM-4V、Qwen-VL 等）。如果接口不接受图片，会自动改用纯文本重试一次。"
             }
           ]
         },
@@ -529,17 +536,24 @@
     "6": "简答题",
     "8": "其他"
   };
+  const LLM_CONFIDENCE_LABELS = {
+    high: "高",
+    medium: "中",
+    low: "低",
+    tiku: "题库"
+  };
   const LLM_ANSWER_SYSTEM_PROMPT = [
-    "你是一位严谨的课程答题助手，请直接给出最可能的正确答案。",
-    "只输出一个 JSON 对象，不要输出解释、Markdown 代码块或任何多余文字。",
-    '固定输出格式：{"answers": ["答案1", "答案2"]}',
+    "你是一位严谨的课程答题助手：先核对题意和选项，再给出最可能的正确答案。",
+    "输出格式：先用不超过两句话说明判断依据，然后在最后输出一个 JSON 对象；JSON 必须是整段回答的最后内容，之后不要再写任何文字。",
+    'JSON 固定格式：{"answers": ["B"], "choice": 2, "confidence": "high", "unsure": false}',
+    "字段说明：answers 是答案数组；choice 是选择题所选项的序号（从 1 开始，非选择题填 0）；confidence 只能是 high / medium / low；unsure 为 true 表示题目信息不足、无法判断。",
     "作答规则：",
-    "1. 选择题（单选、多选）的选项已按顺序编号为 A、B、C、D…，必须只回答选项字母，不要回答选项内容，也不要附加任何其它文字。",
-    '2. 单选题只给一个字母，例如 {"answers": ["B"]}；多选题按字母升序给出全部正确选项，例如 {"answers": ["A", "C"]}。',
+    "1. 选择题（单选、多选）的选项已按顺序编号为 A、B、C、D…，answers 里必须只放选项字母，不要放选项内容，也不要附加任何其它文字；choice 必须填出所选选项的序号，两者要一致。",
+    '2. 单选题只给一个字母，例如 {"answers": ["B"], "choice": 2, "confidence": "high", "unsure": false}；多选题按字母升序给出全部正确选项，例如 {"answers": ["A", "C"], "choice": 1, "confidence": "high", "unsure": false}。',
     '3. 判断题只给 "对" 或 "错"，不要用字母回答。',
     "4. 填空题按空位顺序给出每个空的答案，有几个空就给几个元素。",
     "5. 简答题给出完整答案文本，作为数组的第一个元素。",
-    "6. 即使不确定也要给出最可能的答案，绝对不要返回空数组。"
+    "6. 信息足够就明确作答；只有题干残缺、图片看不清、缺少材料或确实无法判断时，才把 unsure 设为 true、answers 设为空数组，不要硬猜。"
   ].join("\n");
   const isChoiceQuestionType = (type) => ["0", "1", "单选题", "多选题"].includes(type);
   const isJudgementQuestionType = (type) => ["3", "判断题"].includes(type);
@@ -555,7 +569,8 @@
       model: String(getLlmParam(configStore, "模型名称")?.value || "").trim(),
       temperature: Number(getLlmParam(configStore, "温度")?.value ?? 0.2),
       timeout: Number(getLlmParam(configStore, "超时时间，单位秒")?.value ?? 60),
-      maxTokens: Number(getLlmParam(configStore, "最大输出 token")?.value ?? 0)
+      maxTokens: Number(getLlmParam(configStore, "最大输出 token")?.value ?? 0),
+      vision: Boolean(getLlmParam(configStore, "发送题目图片（识图）")?.value ?? true)
     };
   };
   const buildLlmChatUrl = (baseUrl) => {
@@ -564,28 +579,159 @@
       return base;
     return `${base}/chat/completions`;
   };
+  const IMAGE_TAG_RE = /<img\b[^>]*?\bsrc\s*=\s*["']?([^"'\s>]+)["']?[^>]*>/gi;
+  const resolveImageUrl = (src, baseUrl) => {
+    const text = String(src || "").trim();
+    if (!text)
+      return "";
+    if (/^data:/i.test(text))
+      return text;
+    try {
+      return new URL(text, baseUrl || location.href).toString();
+    } catch (error) {
+      return text;
+    }
+  };
+  const stripImageTagsForPrompt = (text, images, baseUrl) => String(text ?? "").replace(IMAGE_TAG_RE, (_whole, src) => {
+    const key = resolveImageUrl(src, baseUrl);
+    if (!key)
+      return "";
+    let index = images.indexOf(key);
+    if (index < 0) {
+      images.push(key);
+      index = images.length - 1;
+    }
+    return `［图${index + 1}］`;
+  });
+  const COURSE_CONTEXT_SELECTORS = [".chapter_title", ".prev_title", ".mark_title", ".posCatalog_name", ".catalog_title", ".chapterName", ".course-title", ".courseName", "#prev_tit", "h1"];
+  const BORING_CONTEXT_RE = /^(?:超星学习通|学习通|泛雅|作业详情|作业|考试|章节测验|章节测试|答题|智慧树|知到|首页)$/;
+  const pickCourseContext = (doc) => {
+    if (!doc)
+      return "";
+    const parts = [];
+    const push = (value) => {
+      const text = String(value || "").replace(/\s+/g, " ").trim();
+      if (!text || text.length > 80 || BORING_CONTEXT_RE.test(text))
+        return;
+      if (parts.some((item) => item.includes(text) || text.includes(item)))
+        return;
+      parts.push(text);
+    };
+    try {
+      push(doc.title);
+    } catch (error) {
+    }
+    for (const selector of COURSE_CONTEXT_SELECTORS) {
+      try {
+        const element = doc.querySelector(selector);
+        if (element && element.textContent)
+          push(element.textContent);
+      } catch (error) {
+      }
+    }
+    return parts.slice(0, 2).join(" · ").slice(0, 100);
+  };
   const buildLlmMessages = (question) => {
     const type = String(question?.type ?? "");
-    const stem = question?.searchText?.stem ?? question?.title ?? "";
-    const options = question?.optionsText ?? question?.searchText?.options ?? [];
-    const optionCount = Array.isArray(options) ? options.length : 0;
-    const lines = [`题型：${LLM_QUESTION_TYPE_LABELS[type] || type || "未知"}`, `题目：${stem}`];
+    const baseUrl = question?.baseUrl || (typeof location !== "undefined" ? location.href : "");
+    const images = [];
+    const stem = stripImageTagsForPrompt(question?.searchText?.stem ?? question?.title ?? "", images, baseUrl);
+    const rawOptions = question?.optionsText ?? question?.searchText?.options ?? [];
+    const options = Array.isArray(rawOptions) ? rawOptions.map((option) => stripImageTagsForPrompt(option, images, baseUrl)) : [];
+    const optionCount = options.length;
+    const lines = [];
+    const context = String(question?.context || "").trim();
+    if (context)
+      lines.push(`来源：${context}`);
+    lines.push(`题型：${LLM_QUESTION_TYPE_LABELS[type] || type || "未知"}`);
+    lines.push(`题目：${stem}`);
     if (optionCount) {
       lines.push("选项：");
       options.forEach((option, index) => lines.push(`${String.fromCharCode(65 + index)}. ${option}`));
     }
     if (isChoiceQuestionType(type)) {
       lines.push(optionCount ? `本题是选择题，选项编号为 A~${String.fromCharCode(65 + optionCount - 1)}，请从这些编号里选。` : "本题是选择题，请按选项顺序用 A、B、C、D 作答。");
-      lines.push('只回答正确选项的字母，例如 {"answers": ["B"]}；多选题按字母升序给出全部正确选项，例如 {"answers": ["A", "C"]}。');
+      lines.push('必须从这些编号里选出确定的选项：answers 里放字母，choice 里放序号（从 1 开始），例如 {"answers": ["B"], "choice": 2, "confidence": "high", "unsure": false}；多选题按字母升序给出全部正确选项。');
     } else if (isJudgementQuestionType(type)) {
-      lines.push('本题是判断题，只回答 "对" 或 "错"，例如 {"answers": ["对"]}。');
+      lines.push('本题是判断题，只回答 "对" 或 "错"。');
     } else {
       lines.push("请按题意或空位顺序给出答案文本。");
     }
+    if (images.length)
+      lines.push(`题目里有 ${images.length} 张图片，按出现顺序编号为 图1 … 图${images.length}；如果本条消息没有附带图片，就只能依据文字判断，信息不足时请把 unsure 设为 true。`);
+    return {
+      messages: [
+        { role: "system", content: LLM_ANSWER_SYSTEM_PROMPT },
+        { role: "user", content: lines.join("\n") }
+      ],
+      images
+    };
+  };
+  const buildChoiceRepairMessages = (question, forced = false, previousAnswer = "") => {
+    const options = Array.isArray(question?.optionsText) ? question.optionsText : [];
+    const isMultiple = String(question?.type) === "1";
+    const clean = (text) => String(text ?? "").replace(IMAGE_TAG_RE, "").replace(/\s+/g, " ").trim();
+    const lines = [];
+    if (forced) {
+      lines.push("即使你不确定，也必须从下面的选项里选一个最可能的，不允许返回 unsure，也不允许答案为空。");
+      lines.push("这是最后一次机会，程序会直接按你的 choice 点选。");
+    } else {
+      lines.push("你上一轮的回答没有对应到页面上的任何一个选项，现在必须重新给出可以直接执行的答案。");
+      if (previousAnswer)
+        lines.push(`你上一轮给出的答案是：${previousAnswer}。如果它只是表述和选项不同，请把它对应到最接近的选项字母；如果确实对不上，就按题意重新选一个。`);
+    }
+    lines.push(`题目：${clean(question?.searchText?.stem ?? question?.title ?? "")}`, "选项：");
+    options.forEach((option, index) => lines.push(`${String.fromCharCode(65 + index)}. ${clean(option)}`));
+    lines.push(isMultiple ? "这是多选题：只从上面的字母里选，可以有多个，按字母升序。" : "这是单选题：只能从上面的字母里选一个，不要选两个。");
+    lines.push('只输出一个 JSON，不要解释：{"answers": ["B"], "choice": 2, "confidence": "high", "unsure": false}');
+    lines.push("answers 里必须只有字母（A/B/C…），choice 是所选选项的序号，从 1 开始。");
     return [
-      { role: "system", content: LLM_ANSWER_SYSTEM_PROMPT },
+      { role: "system", content: "你是答题助手，必须把答案落到给定的选项编号上，输出可被程序直接使用的 JSON。" },
       { role: "user", content: lines.join("\n") }
     ];
+  };
+  const normalizeLlmConfidence = (value) => {
+    const text = String(value ?? "").trim().toLowerCase();
+    if (["high", "高", "确定", "sure", "very high"].includes(text))
+      return "high";
+    if (["low", "低", "不确定", "unsure", "very low"].includes(text))
+      return "low";
+    if (["medium", "中", "一般", "mid"].includes(text))
+      return "medium";
+    return "medium";
+  };
+  const CN_OPTION_NUMERALS = { "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10 };
+  const toOptionNumber = (token) => {
+    const text = String(token ?? "").trim();
+    if (/^[0-9]{1,2}$/.test(text))
+      return Number(text);
+    if (text.length === 1 && CN_OPTION_NUMERALS[text])
+      return CN_OPTION_NUMERALS[text];
+    if (/^十[一二三四五六七八九]$/.test(text))
+      return 10 + CN_OPTION_NUMERALS[text[1]];
+    if (/^[一二三四五六七八九]十$/.test(text))
+      return CN_OPTION_NUMERALS[text[0]] * 10;
+    return 0;
+  };
+  const parseChoiceOrdinal = (value) => {
+    const text = String(value ?? "").trim().replace(/^第\s*/, "").replace(/\s*(?:个|项|条|选项)$/, "");
+    if (!text)
+      return 0;
+    if (/^[A-Za-z]$/.test(text))
+      return text.toUpperCase().charCodeAt(0) - 64;
+    return toOptionNumber(text);
+  };
+  const normalizeParsedLlmAnswer = (parsed) => {
+    const answers = Array.isArray(parsed?.answers) ? parsed.answers.map((value) => String(value ?? "").trim()).filter(Boolean) : [];
+    const numericChoice = Number(parsed?.choice);
+    const choice = Number.isInteger(numericChoice) ? numericChoice : parseChoiceOrdinal(parsed?.choice);
+    const hasChoice = Number.isInteger(choice) && choice >= 1;
+    return {
+      answers,
+      choice,
+      confidence: normalizeLlmConfidence(parsed?.confidence),
+      unsure: Boolean(parsed?.unsure) || answers.length === 0 && !hasChoice
+    };
   };
   const parseLlmAnswerJson = (content) => {
     const text = String(content ?? "").replace(/^\uFEFF/, "").trim();
@@ -604,15 +750,15 @@
       try {
         const parsed = JSON.parse(candidate);
         if (Array.isArray(parsed?.answers))
-          return parsed;
+          return normalizeParsedLlmAnswer(parsed);
         if (typeof parsed?.answer === "string")
-          return { answers: [parsed.answer] };
+          return normalizeParsedLlmAnswer({ answers: [parsed.answer] });
       } catch (error) {
         continue;
       }
     }
     const plain = withoutFence.replace(/^["'`]+|["'`]+$/g, "").trim();
-    return plain && plain.length <= 60 ? { answers: [plain] } : null;
+    return plain && plain.length <= 60 ? normalizeParsedLlmAnswer({ answers: [plain] }) : null;
   };
   const toAsciiOptionLetters = (value) => String(value ?? "").replace(/[\uFF21-\uFF3A\uFF41-\uFF5A]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 65248));
   const splitOptionLetters = (text) => Array.from(new Set(String(text ?? "").toUpperCase().match(/[A-Z]/g) || []));
@@ -683,12 +829,58 @@
     });
     return bestScore >= 80 ? bestIndex : null;
   };
+  const findExactOptionIndex = (optionsText, value) => {
+    const target = normalizeOptionForMatch(value);
+    if (!target)
+      return null;
+    for (let index = 0; index < optionsText.length; index++) {
+      if (normalizeOptionForMatch(optionsText[index]) === target)
+        return index;
+    }
+    return null;
+  };
+  const extractChoiceIndexes = (value, optionCount) => {
+    const text = toAsciiOptionLetters(value).replace(/\u3000/g, " ").trim();
+    if (!text)
+      return [];
+    const limit = Number.isInteger(optionCount) && optionCount > 0 ? Math.min(optionCount, 26) : 26;
+    const indexes = [];
+    const pushLetter = (letter) => {
+      const index = String(letter || "").toUpperCase().charCodeAt(0) - 65;
+      if (index >= 0 && index < limit && !indexes.includes(index))
+        indexes.push(index);
+    };
+    const compact = text.replace(/[（(【\[]/g, "(").replace(/[）)】\]]/g, ")");
+    if (/^[A-Za-z](?:[\s,，、;；\/|和与或+]*[A-Za-z])*$/.test(compact)) {
+      compact.toUpperCase().replace(/[^A-Z]/g, "").split("").forEach(pushLetter);
+      return indexes;
+    }
+    const labelled = compact.match(/(?:正确答案|正确选项|答案|应选|选择|选项|选)\s*(?:是|为|[:：=])?\s*([A-Za-z][A-Za-z\s,，、;；\/|和与或+]*)/);
+    if (labelled) {
+      (labelled[1].toUpperCase().match(/[A-Z]/g) || []).forEach(pushLetter);
+      if (indexes.length)
+        return indexes;
+    }
+    const single = compact.match(/^[\s(]*(?:第|选项)?\s*([A-Za-z])\s*(?:项|选项|个|条)?\s*[).．、,，:：]?\s*$/);
+    if (single) {
+      pushLetter(single[1]);
+      if (indexes.length)
+        return indexes;
+    }
+    const numeral = compact.match(/^[\s(]*(?:第|选项)?\s*([0-9]{1,2}|[一二两三四五六七八九十]{1,3})\s*(?:个|项|条|选项)?\s*[).．、,，:：]?\s*$/);
+    if (numeral) {
+      const number = toOptionNumber(numeral[1]);
+      if (number >= 1 && number <= limit && !indexes.includes(number - 1))
+        indexes.push(number - 1);
+    }
+    return indexes;
+  };
   const resolveChoiceOptionIndexes = (optionsText, value) => {
     if (!Array.isArray(optionsText) || !optionsText.length)
       return [];
-    const letterIndexes = extractOptionLetters(value).map((letter) => letter.charCodeAt(0) - 65).filter((index) => index >= 0 && index < optionsText.length);
-    if (letterIndexes.length)
-      return Array.from(new Set(letterIndexes));
+    const indexes = extractChoiceIndexes(value, optionsText.length);
+    if (indexes.length)
+      return indexes;
     const matched = findOptionIndexByText(optionsText, value);
     return matched === null ? [] : [matched];
   };
@@ -725,27 +917,53 @@
       return "错";
     return "";
   };
+  const resolveChoiceIndexesFromParsed = (question, parsed) => {
+    const optionsText = Array.isArray(question?.optionsText) ? question.optionsText : [];
+    if (!optionsText.length)
+      return [];
+    const indexes = [];
+    const push = (index) => {
+      if (Number.isInteger(index) && index >= 0 && index < optionsText.length && !indexes.includes(index))
+        indexes.push(index);
+    };
+    const answers = Array.isArray(parsed?.answers) ? parsed.answers : [];
+    answers.forEach((value) => {
+      if (/^[A-Za-z]$/.test(String(value ?? "").trim()))
+        return;
+      const exact = findExactOptionIndex(optionsText, value);
+      if (exact !== null)
+        push(exact);
+    });
+    if (!indexes.length) {
+      answers.forEach((value) => {
+        extractChoiceIndexes(value, optionsText.length).forEach(push);
+      });
+    }
+    if (!indexes.length && Number.isInteger(parsed?.choice) && parsed.choice >= 1)
+      push(parsed.choice - 1);
+    if (!indexes.length) {
+      answers.forEach((value) => {
+        const matched = findOptionIndexByText(optionsText, value);
+        if (matched !== null)
+          push(matched);
+      });
+    }
+    indexes.sort((left, right) => left - right);
+    return indexes;
+  };
   const toLlmAnswerValues = (question, parsed) => {
     const type = String(question?.type ?? "");
     const optionsText = Array.isArray(question?.optionsText) ? question.optionsText : [];
     const rawValues = Array.isArray(parsed?.answers) ? parsed.answers : [];
     const values = rawValues.map((value) => String(value ?? "").trim()).filter(Boolean);
+    if (isChoiceQuestionType(type)) {
+      const indexes = resolveChoiceIndexesFromParsed(question, parsed);
+      if (indexes.length)
+        return indexes.map((index) => formatChoiceOption(index, optionsText[index]));
+      return values.length ? Array.from(new Set(values)) : null;
+    }
     if (!values.length)
       return null;
-    if (isChoiceQuestionType(type)) {
-      const indexes = [];
-      values.forEach((value) => {
-        resolveChoiceOptionIndexes(optionsText, value).forEach((index) => {
-          if (!indexes.includes(index))
-            indexes.push(index);
-        });
-      });
-      if (indexes.length) {
-        indexes.sort((left, right) => left - right);
-        return indexes.map((index) => formatChoiceOption(index, optionsText[index]));
-      }
-      return Array.from(new Set(values));
-    }
     if (isJudgementQuestionType(type)) {
       const strict = normalizeJudgementAnswerStrict(values[0]);
       if (strict)
@@ -754,9 +972,84 @@
       if (mapped)
         return [mapped];
       const loose = normalizeJudgementAnswer(values[0]);
-      return [loose === "对" || loose === "错" ? loose : values[0]];
+      return loose === "对" || loose === "错" ? [loose] : null;
     }
     return values;
+  };
+  const IMAGE_MAX_COUNT = 6;
+  const IMAGE_MAX_BYTES = 900 * 1024;
+  const IMAGE_TOTAL_CHARS = 4500000;
+  const arrayBufferToBase64 = (buffer) => {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    const chunkSize = 32768;
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
+      binary += String.fromCharCode.apply(null, chunk);
+    }
+    return btoa(binary);
+  };
+  const guessImageMime = (src, headers) => {
+    const matched = String(headers || "").match(/content-type\s*:\s*([\w/+.-]+)/i);
+    if (matched && /^image\//i.test(matched[1]))
+      return matched[1].toLowerCase();
+    const extension = String(src || "").split("?")[0].split(".").pop()?.toLowerCase();
+    const byExtension = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml" };
+    return byExtension[extension] || "image/jpeg";
+  };
+  const fetchImageAsDataUrl = (src) => new Promise((resolve) => {
+    const url = resolveImageUrl(src);
+    if (!url)
+      return resolve("");
+    if (/^data:/i.test(url))
+      return resolve(url.length <= IMAGE_MAX_BYTES * 2 ? url : "");
+    if (!/^https?:/i.test(url) || typeof _GM_xmlhttpRequest !== "function")
+      return resolve("");
+    _GM_xmlhttpRequest({
+      url,
+      method: "GET",
+      responseType: "arraybuffer",
+      timeout: 8e3,
+      onload: (response) => {
+        const buffer = response?.response;
+        if (response.status < 200 || response.status >= 300 || !buffer || typeof buffer.byteLength !== "number")
+          return resolve("");
+        if (!buffer.byteLength || buffer.byteLength > IMAGE_MAX_BYTES)
+          return resolve("");
+        try {
+          resolve(`data:${guessImageMime(url, response.responseHeaders)};base64,${arrayBufferToBase64(buffer)}`);
+        } catch (error) {
+          resolve("");
+        }
+      },
+      onerror: () => resolve(""),
+      ontimeout: () => resolve("")
+    });
+  });
+  const buildVisionMessages = async (built) => {
+    const urls = built.images.slice(0, IMAGE_MAX_COUNT);
+    const dataUrls = await Promise.all(urls.map((url) => fetchImageAsDataUrl(url)));
+    const parts = [];
+    let attached = 0;
+    let totalChars = 0;
+    dataUrls.forEach((dataUrl, index) => {
+      if (dataUrl && totalChars + dataUrl.length <= IMAGE_TOTAL_CHARS) {
+        totalChars += dataUrl.length;
+        attached += 1;
+        parts.push({ type: "image_url", image_url: { url: dataUrl } });
+        return;
+      }
+      parts.push({ type: "text", text: `［图${index + 1} 未发送（加载失败或体积过大），请忽略这张图］` });
+    });
+    if (!attached)
+      return { messages: built.messages, attached: 0 };
+    return {
+      messages: [
+        built.messages[0],
+        { role: "user", content: [{ type: "text", text: String(built.messages[1].content) }, ...parts] }
+      ],
+      attached
+    };
   };
   const requestLlmChat = (settings, messages) => {
     const requestUrl = buildLlmChatUrl(settings.baseUrl);
@@ -809,7 +1102,7 @@
             const raw = String(response.responseText || "");
             const brief = raw.replace(/\s+/g, " ").slice(0, 300);
             if (response.status < 200 || response.status >= 300) {
-              finish({ success: false, message: `接口返回 HTTP ${response.status}${brief ? `：${brief}` : ""}（${requestUrl}）` });
+              finish({ success: false, status: response.status, message: `接口返回 HTTP ${response.status}${brief ? `：${brief}` : ""}（${requestUrl}）` });
               return;
             }
             let body;
@@ -899,7 +1192,7 @@
             const raw = String(response.responseText || "");
             const brief = raw.replace(/\s+/g, " ").slice(0, 200);
             if (response.status < 200 || response.status >= 300) {
-              finish({ success: false, message: `接口返回 HTTP ${response.status}${brief ? `：${brief}` : ""}（${requestUrl}）` });
+              finish({ success: false, status: response.status, message: `接口返回 HTTP ${response.status}${brief ? `：${brief}` : ""}（${requestUrl}）` });
               return;
             }
             let body;
@@ -951,7 +1244,14 @@
     });
     return last.success ? last : { success: false, message: `${last.message}。已尝试：${tried.join(" ；")}` };
   };
-    const askLlm = async (question) => {
+    const safeAddLog = (message, type) => {
+    try {
+      useLogStore().addLog(message, type);
+    } catch (error) {
+    }
+  };
+  let lastLlmPromptPreview = "";
+  const askLlm = async (question) => {
     try {
       const settings = getLlmSettings();
       if (!settings.baseUrl)
@@ -961,15 +1261,103 @@
       if (!settings.model)
         return apiError("请先在「设置 - 大模型答题设置」中填写模型名称");
       const startedAt = Date.now();
-      const response = await requestLlmChat(settings, buildLlmMessages(question));
+      const built = buildLlmMessages(question);
+      let messages = built.messages;
+      let attachedImages = 0;
+      if (settings.vision && built.images.length) {
+        const vision = await buildVisionMessages(built);
+        messages = vision.messages;
+        attachedImages = vision.attached;
+      }
+      const userContent = messages[1]?.content;
+      const promptText = Array.isArray(userContent)
+        ? String(userContent.find((part) => part?.type === "text")?.text ?? "")
+        : String(userContent ?? "");
+      lastLlmPromptPreview = `${promptText}${attachedImages ? `\n[已附带图片 ${attachedImages} 张]` : built.images.length ? `\n[图片 ${built.images.length} 张未能取到，只发了文字]` : ""}`;
+      try {
+        _unsafeWindow.__cxLastPrompt = lastLlmPromptPreview;
+      } catch (error) {
+      }
+      let response = await requestLlmChat(settings, messages);
+      if (!response.success && attachedImages && /(image|vision|multimodal|unsupported|invalid|400|422)/i.test(String(response.message))) {
+        safeAddLog("大模型接口不接受图片，已自动改用纯文本重试（识图未生效）", "warning");
+        attachedImages = 0;
+        lastLlmPromptPreview = String(built.messages[1]?.content ?? "");
+        response = await requestLlmChat(settings, built.messages);
+      }
       if (!response.success) {
-        recordLlmDebug({ action: "答题请求", model: settings.model, url: buildLlmChatUrl(settings.baseUrl), ok: false, detail: String(response.message).slice(0, 200) });
+        recordLlmDebug({ action: "答题请求", model: settings.model, url: buildLlmChatUrl(settings.baseUrl), ok: false, detail: String(response.message).slice(0, 200), prompt: lastLlmPromptPreview.slice(0, 400) });
         return apiError(response.message);
       }
-      const parsed = parseLlmAnswerJson(response.content);
+      let parsed = parseLlmAnswerJson(response.content);
       if (!parsed) {
         const preview = String(response.content).replace(/\s+/g, " ").slice(0, 120);
         return apiError(response.truncated ? `大模型的输出被 max_tokens 截断了，答案不完整，请把「最大输出 token」设为 0 或调大后重试。原文片段：${preview}` : `无法解析大模型返回的答案格式：${preview}`);
+      }
+      if (parsed.unsure) {
+        const guessOptions = Array.isArray(question?.optionsText) ? question.optionsText : [];
+        let forcedAnswer = null;
+        if (isChoiceQuestionType(String(question?.type ?? "")) && guessOptions.length) {
+          const forcedResponse = await requestLlmChat(settings, buildChoiceRepairMessages(question, true));
+          if (forcedResponse.success) {
+            const candidate = parseLlmAnswerJson(forcedResponse.content);
+            const candidateIndexes = candidate && !candidate.unsure ? resolveChoiceIndexesFromParsed(question, candidate) : [];
+            if (candidateIndexes.length) {
+              forcedAnswer = { ...candidate, confidence: "low", unsure: false };
+              safeAddLog(`模型原本说信息不足，已强制重问并锁定到 ${String.fromCharCode(65 + candidateIndexes[0])}（把握记「低」，不计入自动提交）`, "warning");
+            }
+          }
+        }
+        if (!forcedAnswer) {
+          recordLlmDebug({ action: "答题请求", model: settings.model, url: buildLlmChatUrl(settings.baseUrl), ok: false, detail: "模型表示信息不足（unsure）", prompt: lastLlmPromptPreview.slice(0, 400) });
+          return {
+            success: false,
+            data: null,
+            error: { code: "LLM_UNSURE", message: "大模型判断题目信息不足（可能缺图、乱码或材料不全），这题没有硬猜", details: null },
+            meta: { source: "llm", model: settings.model, confidence: "low", unsure: true, images: attachedImages, cost_ms: Date.now() - startedAt, credit_remaining: null }
+          };
+        }
+        parsed = forcedAnswer;
+      }
+      const optionsText = Array.isArray(question?.optionsText) ? question.optionsText : [];
+      if (isChoiceQuestionType(String(question?.type ?? "")) && optionsText.length) {
+        const isSingle = String(question?.type) === "0";
+        let indexes = resolveChoiceIndexesFromParsed(question, parsed);
+        let usedRepair = false;
+        if (!indexes.length || isSingle && indexes.length > 1) {
+          const previousAnswer = parsed.answers.length ? parsed.answers.join(" / ") : Number.isInteger(parsed.choice) ? `第 ${parsed.choice} 项` : "";
+          const repairMessages = buildChoiceRepairMessages(question, false, previousAnswer);
+          const repairResponse = await requestLlmChat(settings, repairMessages);
+          if (repairResponse.success) {
+            const repaired = parseLlmAnswerJson(repairResponse.content);
+            const repairedIndexes = repaired && !repaired.unsure ? resolveChoiceIndexesFromParsed(question, repaired) : [];
+            if (repairedIndexes.length) {
+              indexes = repairedIndexes;
+              parsed = repaired;
+              usedRepair = true;
+              if (parsed.confidence === "high")
+                parsed.confidence = "medium";
+            }
+          }
+        }
+        if (!indexes.length) {
+          const given = parsed.answers.length ? formatAnswerLabel(parsed.answers) : Number.isInteger(parsed.choice) ? `第 ${parsed.choice} 项` : "空答案";
+          recordLlmDebug({ action: "答题请求", model: settings.model, url: buildLlmChatUrl(settings.baseUrl), ok: false, detail: `答案无法对应选项：${given}`, prompt: lastLlmPromptPreview.slice(0, 400) });
+          return {
+            success: false,
+            data: null,
+            error: { code: "LLM_NO_OPTION", message: `大模型给了答案（${given}），但对应不到页面上的 ${optionsText.length} 个选项，可能是选项没解析对或答案和选项都被改写了`, details: null },
+            meta: { source: "llm", model: settings.model, confidence: "low", unsure: false, images: attachedImages, cost_ms: Date.now() - startedAt, credit_remaining: null }
+          };
+        }
+        if (isSingle && indexes.length > 1) {
+          parsed = { ...parsed, answers: [String.fromCharCode(65 + indexes[0])], choice: indexes[0] + 1, confidence: "low" };
+          safeAddLog(`单选题模型给了 ${indexes.length} 个选项，已按第一个作答并把把握降为「低」`, "warning");
+        } else {
+          parsed = { ...parsed, answers: indexes.map((index) => String.fromCharCode(65 + index)), choice: indexes[0] + 1 };
+        }
+        if (usedRepair)
+          safeAddLog(`上一轮答案对不上选项，已重问并锁定到 ${parsed.answers.join("/")}`, "warning");
       }
       const values = toLlmAnswerValues(question, parsed);
       if (!values || !values.length)
@@ -986,6 +1374,9 @@
         meta: {
           source: "llm",
           model: settings.model,
+          confidence: parsed.confidence,
+          unsure: false,
+          images: attachedImages,
           cost_ms: Date.now() - startedAt,
           credit_remaining: null
         }
@@ -1551,7 +1942,7 @@
                 vue.createVNode(_component_el_table_column, {
                   prop: "title",
                   label: "题目",
-                  width: "370"
+                  width: "340"
                 }, {
                   default: vue.withCtx((scope) => [
                     vue.createElementVNode("span", {
@@ -1563,7 +1954,7 @@
                 vue.createVNode(_component_el_table_column, {
                   prop: "answer",
                   label: "答案",
-                  width: "215"
+                  width: "190"
                 }, {
                   default: vue.withCtx((scope) => [
                     vue.createElementVNode("div", {
@@ -1574,6 +1965,16 @@
                         innerHTML: scope.row.answer.join()
                       }, null, 8, _hoisted_6))
                     ], 2)
+                  ]),
+                  _: 1
+                }),
+                vue.createVNode(_component_el_table_column, {
+                  prop: "confidence",
+                  label: "把握",
+                  width: "56"
+                }, {
+                  default: vue.withCtx((scope) => [
+                    vue.createElementVNode("span", null, vue.toDisplayString(scope.row.confidence || "—"))
                   ]),
                   _: 1
                 })
@@ -5855,54 +6256,138 @@
     }()
   );
   var Font_1 = Font;
+  const decryptedDocuments = /* @__PURE__ */ new WeakSet();
+  const ttfTableCache = { text: "", table: null };
+  const base64ToArrayBuffer = (base64) => {
+    const data = window.atob(base64);
+    const buffer = new ArrayBuffer(data.length);
+    const bytes = new Uint8Array(buffer);
+    for (let i = 0; i < data.length; ++i)
+      bytes[i] = data.charCodeAt(i);
+    return buffer;
+  };
   function decrypt(iframeDocument) {
-    var _a, _b, _c;
+    const stats = { elements: 0, chars: 0, unresolved: 0, ok: false, reason: "" };
+    if (!iframeDocument) {
+      stats.reason = "没有可解密的文档";
+      return stats;
+    }
+    const elements = iframeDocument.querySelectorAll(".font-cxsecret");
+    if (!elements.length) {
+      stats.reason = "页面没有字体混淆";
+      return stats;
+    }
     const styles = iframeDocument.querySelectorAll("style");
-    let tip;
+    let tip = null;
     for (let i = 0; i < styles.length; i++) {
-      if ((_a = styles[i].textContent) == null ? void 0 : _a.includes("font-cxsecret")) {
+      if (String(styles[i].textContent || "").includes("font-cxsecret")) {
         tip = styles[i];
         break;
       }
     }
-    if (!tip)
-      return;
-    const fontData = (_c = (_b = tip.textContent) == null ? void 0 : _b.match(/base64,([\w\W]+?)'/)) == null ? void 0 : _c[1];
-    if (!fontData)
-      return;
-    const fontBuffer = base64ToArrayBuffer(fontData);
-    const font = new Font_1(fontBuffer);
-    const table = JSON.parse(_GM_getResourceText("ttf"));
-    const match = {};
-    for (let i = 19968; i < 40870; i++) {
-      const glyph = font.codeToGlyph(i);
+    if (!tip) {
+      stats.reason = "页面有混淆文字但没找到 @font-face";
+      return stats;
+    }
+    const fontData = String(tip.textContent || "").match(/base64,([A-Za-z0-9+/=]+)/)?.[1];
+    if (!fontData) {
+      stats.reason = "混淆字体里没有 base64 数据";
+      return stats;
+    }
+    let table = null;
+    try {
+      const rawTable = String(_GM_getResourceText("ttf") || "");
+      if (!rawTable)
+        throw new Error("字形对照表为空（@resource ttf 没加载到）");
+      if (rawTable !== ttfTableCache.text) {
+        ttfTableCache.table = JSON.parse(rawTable);
+        ttfTableCache.text = rawTable;
+      }
+      table = ttfTableCache.table;
+    } catch (error) {
+      stats.reason = `字形对照表读取失败：${error?.message || error}`;
+      return stats;
+    }
+    let font;
+    try {
+      font = new Font_1(base64ToArrayBuffer(fontData));
+    } catch (error) {
+      stats.reason = `混淆字体解析失败：${error?.message || error}`;
+      return stats;
+    }
+    const chars = /* @__PURE__ */ new Set();
+    elements.forEach((element) => {
+      for (const char of String(element.textContent || "")) {
+        stats.chars += 1;
+        chars.add(char.codePointAt(0));
+      }
+    });
+    const match = /* @__PURE__ */ new Map();
+    for (const codePoint of chars) {
+      if (!(codePoint >= 19968 && codePoint < 40870))
+        continue;
+      let glyph;
+      try {
+        glyph = font.codeToGlyph(codePoint);
+      } catch (error) {
+        continue;
+      }
       if (!glyph)
         continue;
-      const path = font.glyphToPath(glyph);
+      let path;
+      try {
+        path = font.glyphToPath(glyph);
+      } catch (error) {
+        continue;
+      }
       const hash = md5(JSON.stringify(path)).slice(24);
-      match[i] = table[hash];
+      const mapped = table[hash];
+      if (mapped === void 0 || mapped === null)
+        continue;
+      const mappedChar = typeof mapped === "number" ? String.fromCharCode(mapped) : String(mapped);
+      if (mappedChar)
+        match.set(String.fromCharCode(codePoint), mappedChar);
     }
-    const elements = iframeDocument.querySelectorAll(".font-cxsecret");
-    for (let i = 0; i < elements.length; i++) {
-      const el = elements[i];
-      let html = el.innerHTML;
-      for (const key in match) {
-        const value = String.fromCharCode(match[key]);
-        const regExp = new RegExp(String.fromCharCode(Number(key)), "g");
-        html = html.replace(regExp, value);
+    const replaceCjk = (text, counter) => String(text ?? "").replace(/[\u4E00-\u9FAA]/g, (char) => {
+      const mapped = match.get(char);
+      if (mapped === void 0) {
+        counter.unresolved += 1;
+        return char;
       }
-      el.innerHTML = html;
-      el.classList.remove("font-cxsecret");
-    }
-    function base64ToArrayBuffer(base64) {
-      const data = window.atob(base64);
-      const buffer = new ArrayBuffer(data.length);
-      const bytes = new Uint8Array(buffer);
-      for (let i = 0; i < data.length; ++i) {
-        bytes[i] = data.charCodeAt(i);
+      return mapped;
+    });
+    for (const element of elements) {
+      const counter = { unresolved: 0 };
+      let walked = false;
+      try {
+        const walker = iframeDocument.createTreeWalker(element, 4, null);
+        let node = walker.nextNode();
+        let guard = 0;
+        while (node && guard < 5000) {
+          guard += 1;
+          const original = String(node.nodeValue || "");
+          const next = replaceCjk(original, counter);
+          if (next !== original)
+            node.nodeValue = next;
+          node = walker.nextNode();
+        }
+        walked = true;
+      } catch (error) {
+        walked = false;
       }
-      return buffer;
+      if (!walked) {
+        counter.unresolved = 0;
+        const original = String(element.innerHTML || "");
+        const next = replaceCjk(original, counter);
+        if (next !== original)
+          element.innerHTML = next;
+      }
+      element.classList.remove("font-cxsecret");
+      stats.elements += 1;
+      stats.unresolved += counter.unresolved;
     }
+    stats.ok = true;
+    return stats;
   }
   class BaseQuestionHandler {
     constructor() {
@@ -5912,6 +6397,18 @@
       __publicField(this, "addQuestion");
       __publicField(this, "questions", []);
       __publicField(this, "correctNum", 0);
+      __publicField(this, "confidentNum", 0);
+      __publicField(this, "typeSource", "");
+      __publicField(this, "courseContext", "");
+      __publicField(this, "courseContextResolved", false);
+      __publicField(this, "lastStats", null);
+      __publicField(this, "resolveCourseContext", () => {
+        if (this.courseContextResolved)
+          return this.courseContext;
+        this.courseContextResolved = true;
+        this.courseContext = pickCourseContext(this._document) || pickCourseContext(typeof document !== "undefined" ? document : null);
+        return this.courseContext;
+      });
       __publicField(this, "parseHtml", () => {
         throw new Error("请使用继承类的重写方法");
       });
@@ -5965,9 +6462,26 @@
         return options[optionTexts[index]] || null;
       });
       __publicField(this, "resolveAnswerOptionElement", (question, answer) => {
-        return this.findOptionElementByLetter(question, answer) || this.findMatchedOption(question?.options || {}, answer);
+        const byLetter = this.findOptionElementByLetter(question, answer);
+        if (byLetter)
+          return byLetter;
+        const optionTexts = Array.isArray(question?.optionsText) ? question.optionsText : [];
+        const options = question?.options || {};
+        const indexes = extractChoiceIndexes(String(answer ?? ""), optionTexts.length);
+        for (const index of indexes) {
+          const element = options[optionTexts[index]];
+          if (element)
+            return element;
+        }
+        return this.findMatchedOption(options, answer);
       });
       __publicField(this, "inferQuestionTypeByStructure", (questionElement, optionElements, optionTexts) => {
+        this.typeSource = "结构";
+        const labelKind = this.readQuestionTypeLabel(questionElement);
+        if (labelKind) {
+          this.typeSource = "标签";
+          return labelKind;
+        }
         const questionCue = `${this.collectElementCueText(questionElement)} ${String(questionElement.textContent || "")}`;
         if (/多选题|多项选择|不定项|checkbox|multi/i.test(questionCue))
           return "1";
@@ -5977,13 +6491,42 @@
           return "3";
         if (this.hasRadioControl(questionElement, optionElements))
           return "0";
-        if (optionElements.length > 0)
+        if (optionElements.length > 0) {
+          this.typeSource = "弱推断";
           return "0";
+        }
         if (this.hasFillBlankControl(questionElement))
           return "2";
         if (this.hasLongTextControl(questionElement))
           return "4";
+        this.typeSource = "默认";
         return "8";
+      });
+      __publicField(this, "readQuestionTypeLabel", (questionElement) => {
+        const labelNodes = [];
+        try {
+          questionElement.querySelectorAll(".colorShallow, .fontLabel, .mark_name, .question-type, .type, [class*='typeLabel']").forEach((node) => {
+            labelNodes.push(String(node.textContent || ""));
+          });
+        } catch (error) {
+        }
+        const head = String(questionElement.textContent || "").slice(0, 40);
+        const labelText = `${head} ${labelNodes.join(" ")}`;
+        const matched = labelText.match(/[\u3010\[（(]\s*(单选题|单项选择题|多选题|多项选择题|不定项选择题|不定项|判断题|填空题|简答题|名词解释|论述题|计算题|分析题|阅读理解|连线题|排序题)\s*[\u3011\]）)]/u);
+        if (!matched)
+          return "";
+        const token = matched[1];
+        if (/判断题/.test(token))
+          return "3";
+        if (/多选题|多项选择|不定项/.test(token))
+          return "1";
+        if (/单选题|单项选择/.test(token))
+          return "0";
+        if (/填空题/.test(token))
+          return "2";
+        if (/简答题|名词解释|论述|计算|分析|阅读/.test(token))
+          return "4";
+        return "";
       });
       __publicField(this, "hasFillBlankControl", (questionElement) => {
         const textInputs = Array.from(questionElement.querySelectorAll("input")).filter((input) => {
@@ -6191,6 +6734,38 @@
     }
     return "";
   }
+  const optionSelectionState = (element) => {
+    if (!element || typeof element.getAttribute !== "function")
+      return "unknown";
+    const aria = element.getAttribute("aria-checked");
+    const className = String(element.getAttribute("class") || "");
+    const input = element.querySelector?.('input[type="radio"], input[type="checkbox"]');
+    if (aria === "true" || input && input.checked || element.querySelector?.(".check_answer, .check_answer_dx") || /\b(active|checked|selected|is-checked|cur)\b/.test(className))
+      return "selected";
+    if (aria === "false" || input)
+      return "unselected";
+    return "unknown";
+  };
+  const clickOptionElement = (element) => {
+    if (!element)
+      return false;
+    const input = element.querySelector?.('input[type="radio"], input[type="checkbox"]');
+    const target = element.querySelector?.("label") || element;
+    let clicked = false;
+    try {
+      target.click();
+      clicked = true;
+    } catch (error) {
+    }
+    if (input && !input.checked) {
+      try {
+        input.click();
+        clicked = true;
+      } catch (error) {
+      }
+    }
+    return clicked;
+  };
   class CxQuestionHandler extends BaseQuestionHandler {
     constructor(type, iframe) {
       super();
@@ -6201,9 +6776,19 @@
           return 0;
         this.questions = [];
         this.correctNum = 0;
+        this.confidentNum = 0;
         this.parseHtml();
+        if (!this.questions.length) {
+          for (let attempt = 0; attempt < 3 && !this.questions.length; attempt++) {
+            if (!isCurrent())
+              return 0;
+            await sleep(2);
+            this.parseHtml();
+          }
+        }
         if (this.questions.length) {
           this.addLog(`成功解析到${this.questions.length}个题目`, "primary");
+          this.logTypeSummary();
           for (const [index, parsedQuestion] of this.questions.entries()) {
             if (!isCurrent())
               return 0;
@@ -6215,33 +6800,88 @@
             const values = getAnswerValues(answerData, question);
             if (values == null ? void 0 : values.length) {
               question.answer = values;
-              const filled = this.fillQuestion(question);
+              const source = String(((_a = answerData.meta) == null ? void 0 : _a.source) ?? "");
+              const confidence = source === "llm" ? String(((_b = answerData.meta) == null ? void 0 : _b.confidence) ?? "medium") : "tiku";
+              question.confidence = LLM_CONFIDENCE_LABELS[confidence] || "";
+              let filled = null;
+              try {
+                filled = await this.fillQuestion(question);
+              } catch (fillError) {
+                this.addLog(`第${index + 1}道题填写时出错：${escapeLogText(String(fillError?.message || fillError))}`, "danger");
+              }
               const failedAnswers = filled && Array.isArray(filled.failed) ? filled.failed : [];
               if (failedAnswers.length) {
                 question.answerStatus = "error";
                 this.addLog(`第${index + 1}道题有答案但页面上没点上：${escapeLogText(failedAnswers.slice(0, 4).join("、"))}${failedAnswers.length > 4 ? " 等" : ""}。答案是 ${escapeLogText(formatAnswerLabel(values))}，可能是页面选项与答案对不上，这题请手动确认`, "danger");
               } else {
                 question.answerStatus = "success";
-                const llmSource = ((_a = answerData.meta) == null ? void 0 : _a.source) === "llm";
-                const llmModel = ((_b = answerData.meta) == null ? void 0 : _b.model) || "大模型";
-                this.addLog(llmSource ? `第${index + 1}道题已由大模型作答：${escapeLogText(formatAnswerLabel(values))}` : `第${index + 1}道题搜索成功`, "success");
+                const llmSource = source === "llm";
+                const llmModel = ((_a = answerData.meta) == null ? void 0 : _a.model) || "大模型";
+                this.addLog(llmSource ? `第${index + 1}道题已由大模型作答：${escapeLogText(formatAnswerLabel(values))}（把握：${question.confidence || "未知"}）` : `第${index + 1}道题搜索成功`, "success");
                 this.addLog(llmSource ? `答案来源:大模型（${llmModel}）` : `剩余次数:${String(((_a = answerData.meta) == null ? void 0 : _a.credit_remaining) ?? "未知")}`, "primary");
                 this.correctNum += 1;
+                if (confidence === "tiku" || confidence === "high")
+                  this.confidentNum += 1;
               }
             } else {
               const failureReason = ((_b = answerData.error) == null ? void 0 : _b.message) || "未查询到答案";
               this.addLog(`第${index + 1}道题搜索失败：${escapeLogText(failureReason)}`, "danger");
               question.answerStatus = "error";
               question.answer = [escapeLogText(failureReason)];
+              question.confidence = "";
             }
           }
         } else
           this.addLog("未解析到题目，请进入正确页面", "danger");
-        return this.questions.length ? this.correctNum / this.questions.length * 100 : 0;
+        const total = this.questions.length;
+        const fillRate = total ? this.correctNum / total * 100 : 0;
+        const confidentRate = total ? this.confidentNum / total * 100 : 0;
+        this.lastStats = { total, filled: this.correctNum, confident: this.confidentNum, fillRate, confidentRate };
+        if (total)
+          this.addLog(`答题统计：共 ${total} 题，已填 ${this.correctNum} 题（填答率 ${fillRate.toFixed(0)}%），有把握 ${this.confidentNum} 题（把握率 ${confidentRate.toFixed(0)}%）。自动提交只看「把握率」`, confidentRate >= 80 ? "success" : "warning");
+        return confidentRate;
+      });
+      __publicField(this, "decryptIfNeeded", () => {
+        if (!this._document || decryptedDocuments.has(this._document))
+          return;
+        decryptedDocuments.add(this._document);
+        let stats;
+        try {
+          stats = decrypt(this._document);
+        } catch (error) {
+          this.addLog(`题目字体还原时出错：${escapeLogText(String(error?.message || error))}，这会让大模型读到乱码`, "danger");
+          return;
+        }
+        if (stats.elements) {
+          if (stats.unresolved)
+            this.addLog(`题目字体已还原 ${stats.elements} 处，但有 ${stats.unresolved} 个字不在字形表里（页面字体可能更新了），这些字大模型会读成乱码`, "warning");
+          else
+            this.addLog(`题目字体混淆已还原（${stats.elements} 处），大模型读到的题干是正常文字`, "success");
+        } else if (stats.reason && !/没有字体混淆/.test(stats.reason))
+          this.addLog(`题目字体还原失败：${stats.reason}。大模型会读到乱码，正确率会明显偏低`, "danger");
+      });
+      __publicField(this, "logTypeSummary", () => {
+        if (!this.questions.length)
+          return;
+        const counts = {};
+        const guessed = [];
+        this.questions.forEach((question, index) => {
+          const label = LLM_QUESTION_TYPE_LABELS[question.type] || question.type || "未知";
+          counts[label] = (counts[label] || 0) + 1;
+          if (question.typeSource === "弱推断" || question.typeSource === "默认")
+            guessed.push(index + 1);
+        });
+        this.addLog(`题型识别：${Object.entries(counts).map(([label, count]) => `${label} ${count}`).join("、")}`, "primary");
+        if (guessed.length)
+          this.addLog(`第 ${guessed.slice(0, 12).join("、")}${guessed.length > 12 ? " 等" : ""} 题页面上没有「（单选题）/（多选题）」这类标签，是按选项结构推断的；多选被当成单选只答一个就会整题错，答完请抽查这几题`, "warning");
+        const noOptions = this.questions.findIndex((question) => ["0", "1"].includes(String(question.type)) && !(question.optionsText || []).length);
+        if (noOptions >= 0)
+          this.addLog(`第 ${noOptions + 1} 题是选择题但没解析到选项，注意页面结构可能变了`, "warning");
       });
       __publicField(this, "parseHtml", () => {
         if (!this._document)
           return [];
+        this.decryptIfNeeded();
         if (["zj"].includes(this.type)) {
           const questionElements = this._document.querySelectorAll(".TiMu");
           this.addQuestions(questionElements);
@@ -6250,92 +6890,118 @@
           this.addQuestions(questionElements);
         }
       });
-      __publicField(this, "fillQuestion", (question) => {
+      __publicField(this, "fillQuestion", async (question) => {
         if (!this._window)
           return null;
         if (question.type === "0" || question.type === "1") {
+          if (!["zj", "zy", "ks"].includes(this.type))
+            return { total: question.answer.length, applied: 0, failed: question.answer.map((answer) => String(answer)) };
           const failedAnswers = [];
           let applied = 0;
+          const pending = [];
           question.answer.forEach((answer) => {
             const optionElement = this.resolveAnswerOptionElement(question, String(answer));
             if (!optionElement) {
               failedAnswers.push(String(answer));
               return;
             }
-            if (["zj", "zy"].includes(this.type)) {
-              if (optionElement.getAttribute("aria-checked") === "true") {
-                applied += 1;
-                return;
-              }
-              optionElement.click();
+            if (optionSelectionState(optionElement) === "selected") {
               applied += 1;
               return;
             }
-            if (["ks"].includes(this.type)) {
-              if (optionElement.querySelector(".check_answer") || optionElement.querySelector(".check_answer_dx")) {
-                applied += 1;
-                return;
-              }
-              optionElement.click();
-              applied += 1;
-              return;
-            }
-            failedAnswers.push(String(answer));
+            clickOptionElement(optionElement);
+            pending.push({ element: optionElement, answer: String(answer) });
+            applied += 1;
           });
+          if (pending.length) {
+            const checkSelection = (item) => {
+              if (item.element && item.element.isConnected === false)
+                item.element = this.resolveAnswerOptionElement(question, item.answer) || item.element;
+              return optionSelectionState(item.element);
+            };
+            await sleep(0.15);
+            pending.forEach((item) => {
+              if (checkSelection(item) === "unselected")
+                clickOptionElement(item.element);
+            });
+            await sleep(0.15);
+            pending.forEach((item) => {
+              if (checkSelection(item) === "unselected")
+                failedAnswers.push(item.answer);
+            });
+          }
           return { total: question.answer.length, applied, failed: failedAnswers };
         } else if (question.type === "2") {
-          const textareaElements = question.element.querySelectorAll("textarea");
-          if (textareaElements.length === 0)
+          let fields = Array.from(question.element.querySelectorAll("textarea"));
+          if (!fields.length) {
+            fields = Array.from(question.element.querySelectorAll("input")).filter((input) => {
+              const type = String(input.getAttribute("type") || "text").toLowerCase();
+              return ["", "text", "search", "number"].includes(type) && !input.disabled && !input.hidden;
+            });
+          }
+          if (!fields.length)
             return { total: 1, applied: 0, failed: ["（页面上没找到填空输入框）"] };
-          textareaElements.forEach((textareaElement, index) => {
+          fields.forEach((field, index) => {
+            const value = String(question.answer[index] ?? "");
             try {
-              const ueditor = this._window.UE.getEditor(textareaElement.name);
-              ueditor.setContent(String(question.answer[index] ?? ""));
+              const ueditor = this._window.UE.getEditor(field.name);
+              ueditor.setContent(value);
             } catch (e) {
-              textareaElement.value = String(question.answer[index] ?? "");
+              field.value = value;
+              try {
+                const EventCtor = this._window.Event || Event;
+                field.dispatchEvent(new EventCtor("input", { bubbles: true }));
+                field.dispatchEvent(new EventCtor("change", { bubbles: true }));
+              } catch (dispatchError) {
+              }
             }
           });
-          return { total: 1, applied: 1, failed: [] };
+          return { total: fields.length, applied: fields.length, failed: [] };
         } else if (question.type === "3") {
-          let answer = "true";
-          if (String(question.answer[0]).match(/(^|,)(正确|是|对|√|T|ri|right|true)(,|$)/)) {
-            answer = "true";
-          } else if (String(question.answer[0]).match(/(^|,)(错误|否|错|×|F|wr|wrong|false)(,|$)/)) {
-            answer = "false";
-          }
-          const trueOrFalse = {
-            "true": "对",
-            "false": "错"
-          };
+          const trueOrFalse = { "true": "对", "false": "错" };
+          const normalized = normalizeJudgementAnswer(String(question.answer[0] ?? ""));
+          const answer = normalized === "错" ? "false" : "true";
           let clicked = false;
           for (const key in question.options) {
             const optionElement = question.options[key];
+            if (!optionElement)
+              continue;
             if (["zj", "zy"].includes(this.type)) {
-              const ariaLabel = optionElement.getAttribute("aria-label");
-              if (ariaLabel && ariaLabel.includes(`${trueOrFalse[answer]}选择`)) {
-                if (optionElement.getAttribute("aria-checked") === "true") {
+              const ariaLabel = String(optionElement.getAttribute("aria-label") || "");
+              if (ariaLabel.includes(`${trueOrFalse[answer]}选择`)) {
+                if (optionSelectionState(optionElement) === "selected") {
                   clicked = true;
                   continue;
                 }
-                optionElement.click();
+                clickOptionElement(optionElement);
                 clicked = true;
+                continue;
               }
             } else if (["ks"].includes(this.type)) {
               const targetElement = optionElement.querySelector(`span[data='${answer}']`);
-              if (!targetElement)
-                continue;
-              if (targetElement.querySelector(".check_answer")) {
+              if (targetElement) {
+                if (optionSelectionState(optionElement) === "selected") {
+                  clicked = true;
+                  continue;
+                }
+                clickOptionElement(targetElement);
                 clicked = true;
                 continue;
               }
-              targetElement.click();
+            }
+            if (this.normalizeJudgementText(key) === answer) {
+              if (optionSelectionState(optionElement) === "selected") {
+                clicked = true;
+                continue;
+              }
+              clickOptionElement(optionElement);
               clicked = true;
             }
           }
           if (!clicked) {
             const fallbackElement = this.resolveAnswerOptionElement(question, trueOrFalse[answer]);
             if (fallbackElement) {
-              fallbackElement.click();
+              clickOptionElement(fallbackElement);
               clicked = true;
             }
           }
@@ -6412,11 +7078,15 @@
         this.questions.push({
           element: questionElement,
           type: questionKind,
+          typeSource: this.typeSource,
           title: this.clean(questionTitle),
           optionsText: optionTexts,
           options: optionsObject,
           searchText: { stem: searchStem, options: searchOptions },
           answer: [],
+          confidence: "",
+          context: this.resolveCourseContext(),
+          baseUrl: this._document?.baseURI || location.href,
           workType: this.type,
           refer: this._window.location.href
         });
@@ -6626,20 +7296,22 @@
         logStore.addLog("作业已经完成，跳过", "success");
         return;
       }
-      decrypt(iframeDocument);
+      const handler = new CxQuestionHandler("zj", iframe);
       logStore.addLog(`题目列表获取成功`, "primary");
-      const correctRate = await new CxQuestionHandler("zj", iframe).init(context.isCurrent);
+      const confidentRate = await handler.init(context.isCurrent);
       if (!context.isCurrent())
         return;
       iframeWindow.alert = () => {
       };
       if (getChapterParam("章节作业自动提交")?.value) {
+        const threshold = Number(configStore.otherParams.params[2].value);
+        const stats = handler.lastStats;
         logStore.addLog("自动提交已开启，尝试提交", "primary");
-        if (correctRate < Number(configStore.otherParams.params[2].value)) {
-          logStore.addLog(`正确率小于${configStore.otherParams.params[2].value}%，暂存`, "danger");
+        if (!stats || !stats.total || !Number.isFinite(confidentRate) || confidentRate < threshold) {
+          logStore.addLog(`有把握的题只占 ${Number.isFinite(confidentRate) ? confidentRate.toFixed(0) : 0}%（阈值 ${threshold}%），按「猜的题不自动交」规则暂存`, "danger");
           await iframeWindow.noSubmit();
         } else {
-          logStore.addLog(`正确率大于${configStore.otherParams.params[2].value}%，提交`, "success");
+          logStore.addLog(`有把握的题占 ${confidentRate.toFixed(0)}%（阈值 ${threshold}%），提交`, "success");
           await iframeWindow.btnBlueSubmit();
           if (!context.isCurrent())
             return;
@@ -6855,7 +7527,7 @@
             const values = getAnswerValues(answerData, question);
             if (values == null ? void 0 : values.length) {
               question.answer = values;
-              const filled = this.fillQuestion(question);
+              const filled = await this.fillQuestion(question);
               const failedAnswers = filled && Array.isArray(filled.failed) ? filled.failed : [];
               if (failedAnswers.length) {
                 question.answerStatus = "error";
@@ -6864,7 +7536,9 @@
                 question.answerStatus = "success";
                 const llmSource = ((_a = answerData.meta) == null ? void 0 : _a.source) === "llm";
                 const llmModel = ((_b = answerData.meta) == null ? void 0 : _b.model) || "大模型";
-                this.addLog(llmSource ? `第${index + 1}道题已由大模型作答：${escapeLogText(formatAnswerLabel(values))}` : `第${index + 1}道题搜索成功`, "success");
+                const confidence = llmSource ? String(((_c = answerData.meta) == null ? void 0 : _c.confidence) ?? "medium") : "tiku";
+                question.confidence = LLM_CONFIDENCE_LABELS[confidence] || "";
+                this.addLog(llmSource ? `第${index + 1}道题已由大模型作答：${escapeLogText(formatAnswerLabel(values))}（把握：${question.confidence || "未知"}）` : `第${index + 1}道题搜索成功`, "success");
                 this.addLog(llmSource ? `答案来源:大模型（${llmModel}）` : `剩余次数:${String(((_a = answerData.meta) == null ? void 0 : _a.credit_remaining) ?? "未知")}`, "primary");
               }
             } else {
@@ -6969,11 +7643,15 @@
         this.questions.push({
           element: questionElement,
           type: questionType,
+          typeSource: this.typeSource,
           title: questionTitle,
           optionsText: optionTexts,
           options: optionsObject,
           searchText: { stem: searchStem, options: searchOptions },
           answer: [],
+          confidence: "",
+          context: this.resolveCourseContext(),
+          baseUrl: this._document?.baseURI || location.href,
           workType: "zhs",
           refer: this._window.location.href
         });
@@ -7009,7 +7687,8 @@
         ...Array.from(question.element.querySelectorAll("textarea")),
         ...Array.from(question.element.querySelectorAll('[contenteditable="true"]'))
       ].filter((field) => {
-        if (field instanceof HTMLInputElement) {
+        const tag = String(field?.tagName || "").toUpperCase();
+        if (tag === "INPUT") {
           const type = (field.getAttribute("type") || "text").toLowerCase();
           return ["", "text", "search", "number", "tel", "url", "email"].includes(type) && !field.disabled && !field.hidden;
         }
@@ -7017,14 +7696,23 @@
       });
       fields.forEach((field, index) => {
         const answer = String(question.answer[index] ?? question.answer[0] ?? "");
-        if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
-          field.value = String(answer);
-          field.dispatchEvent(new Event("input", { bubbles: true }));
-          field.dispatchEvent(new Event("change", { bubbles: true }));
+        const tag = String(field?.tagName || "").toUpperCase();
+        if (tag === "INPUT" || tag === "TEXTAREA") {
+          field.value = answer;
+          try {
+            const EventCtor = this._window?.Event || Event;
+            field.dispatchEvent(new EventCtor("input", { bubbles: true }));
+            field.dispatchEvent(new EventCtor("change", { bubbles: true }));
+          } catch (error) {
+          }
           return;
         }
         field.textContent = answer;
-        field.dispatchEvent(new Event("input", { bubbles: true }));
+        try {
+          const EventCtor = this._window?.Event || Event;
+          field.dispatchEvent(new EventCtor("input", { bubbles: true }));
+        } catch (error) {
+        }
       });
     }
   }
