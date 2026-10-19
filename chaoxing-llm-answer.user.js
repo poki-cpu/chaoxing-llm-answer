@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🥇超星学习通｜知到智慧树--网课小助手（大模型答题版）
 // @namespace    noshuang
-// @version      0.7.0
+// @version      0.7.1
 // @author       isMobile
 // @description  🫧 目前已经支持的平台：【超星学习通「功能基本完成」】【知到智慧树「目前只支持答题」】。🚀 目前已经具有的功能包括：▶️视频自动观看，跳转下一个任务点，📄章节测试、作业自动完成，无答案自动保存，💯考试自动完成，自动切换、保存。使用脚本请进入对应平台的页面。📚 脚本不内置题库、也不推荐题库服务商：题库接口需自带（在「答题」页填地址和密钥），没有题库可以直接用大模型答题。🤖 新增大模型答题：在「设置 - 大模型答题设置」里填好接口地址、API 密钥和模型名称，即可让大模型自动作答（支持 OpenAI 兼容接口，如 DeepSeek、通义千问、Kimi、智谱、硅基流动等）。✍️ 选择题答案会明确标出该选 A、B、C、D 中的哪一个选项，判断题给出「对」或「错」。🔎 模型名称支持一键从接口地址拉取，拉回来的模型直接点一下就填好。
 // @license      MIT
@@ -357,6 +357,11 @@
           params: [
             {
               name: "启用大模型答题",
+              value: true,
+              type: "boolean"
+            },
+            {
+              name: "视频弹题也自动作答",
               value: true,
               type: "boolean"
             },
@@ -7416,6 +7421,129 @@
       return result;
     };
   };
+  const VIDEO_QUIZ_IFRAME_RE = /\/ananas\/modules\/video\/index\.html/i;
+  const findVideoModuleDocument = (root, depth = 0) => {
+    if (!root || depth > 4)
+      return null;
+    for (const frame of root.querySelectorAll("iframe")) {
+      let doc = null;
+      try {
+        doc = frame.contentDocument;
+      } catch (error) {
+        continue;
+      }
+      if (!doc)
+        continue;
+      if (VIDEO_QUIZ_IFRAME_RE.test(String(frame.src || "")))
+        return doc;
+      const nested = findVideoModuleDocument(doc, depth + 1);
+      if (nested)
+        return nested;
+    }
+    return null;
+  };
+  const readVideoQuiz = (doc) => {
+    const root = doc.querySelector(".tkTopic");
+    if (!root || !root.querySelector("li.ans-videoquiz-opt"))
+      return null;
+    const titleElement = root.querySelector(".tkItem_title");
+    const title = String(titleElement ? titleElement.textContent : "").replace(/\s+/g, " ").trim();
+    const optionElements = Array.from(root.querySelectorAll("li.ans-videoquiz-opt"));
+    const optionsText = optionElements.map((element) => {
+      const label = element.querySelector("label") || element;
+      const text = String(label.textContent || "").replace(/\s+/g, " ").trim();
+      return stripOptionLabelPrefix(text) || text;
+    });
+    if (!title || !optionsText.length)
+      return null;
+    const isMultiple = Boolean(root.querySelector('input[type="checkbox"]')) || /多选题/.test(String(root.textContent || ""));
+    return { root, title, optionElements, optionsText, type: isMultiple ? "1" : "0" };
+  };
+  const clickVideoQuizOption = (element) => {
+    const input = element.querySelector("input");
+    const target = element.querySelector("label") || element;
+    target.click();
+    if (input && !input.checked)
+      input.click();
+  };
+  const answerVideoQuiz = async (doc, quiz) => {
+    const question = {
+      type: quiz.type,
+      title: quiz.title,
+      optionsText: quiz.optionsText,
+      searchText: { stem: quiz.title, options: quiz.optionsText }
+    };
+    const result = await askLlm(question);
+    const values = getAnswerValues(result, question);
+    if (!values || !values.length)
+      throw new Error(result && result.error ? result.error.message : "大模型没有给出答案");
+    const indexes = [];
+    values.forEach((value) => {
+      resolveChoiceOptionIndexes(quiz.optionsText, String(value)).forEach((index) => {
+        if (index >= 0 && index < quiz.optionElements.length && !indexes.includes(index))
+          indexes.push(index);
+      });
+    });
+    if (!indexes.length)
+      throw new Error(`答案对不上选项：${values.join("、")}`);
+    indexes.sort((left, right) => left - right);
+    indexes.forEach((index) => clickVideoQuizOption(quiz.optionElements[index]));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const submit = quiz.root.querySelector("a.ans-videoquiz-submit") || doc.querySelector("#videoquiz-submit");
+    if (!submit)
+      throw new Error("没找到提交按钮");
+    submit.click();
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const continueButton = quiz.root.querySelector("a.ans-videoquiz-continue") || doc.querySelector("#videoquiz-continue");
+    if (continueButton)
+      continueButton.click();
+    return values;
+  };
+  const startVideoQuizWatcher = () => {
+    if (window.top !== window.self)
+      return;
+    if (globalThis.__cxVideoQuizWatcherStarted)
+      return;
+    globalThis.__cxVideoQuizWatcherStarted = true;
+    let busy = false;
+    let lastSignature = "";
+    let attempts = 0;
+    let nextTryAt = 0;
+    setInterval(async () => {
+      if (busy)
+        return;
+      if (!Boolean(getLlmParam(useConfigStore(), "视频弹题也自动作答")?.value))
+        return;
+      const doc = findVideoModuleDocument(document);
+      if (!doc)
+        return;
+      const quiz = readVideoQuiz(doc);
+      if (!quiz)
+        return;
+      const signature = `${quiz.title.slice(0, 80)}|${quiz.optionsText.join("|").slice(0, 160)}`;
+      if (signature !== lastSignature) {
+        lastSignature = signature;
+        attempts = 0;
+        nextTryAt = 0;
+      }
+      if (attempts >= 3 || Date.now() < nextTryAt)
+        return;
+      attempts += 1;
+      const logStore = useLogStore();
+      logStore.addLog(`检测到视频弹题，正在作答：${escapeLogText(quiz.title.slice(0, 60))}`, "warning");
+      busy = true;
+      try {
+        const values = await answerVideoQuiz(doc, quiz);
+        attempts = 3;
+        logStore.addLog(`视频弹题已作答：${escapeLogText(formatAnswerLabel(values))}`, "success");
+      } catch (error) {
+        nextTryAt = Date.now() + 4000;
+        logStore.addLog(`视频弹题作答失败：${escapeLogText(String(error && error.message || error))}`, "danger");
+      } finally {
+        busy = false;
+      }
+    }, 900);
+  };
   const BOOTSTRAP_INTERVAL = 100;
   const COMPLETE_READY_STATE = "complete";
   const ELEMENT_PLUS_STYLE_RESOURCE = "ElementPlusStyle";
@@ -7446,6 +7574,7 @@
     app.use(pinia.createPinia());
     app.use(ElementPlus);
     app.mount(createShadowMountNode());
+    startVideoQuizWatcher();
   };
   const timer = setInterval(() => {
     if (document.readyState !== COMPLETE_READY_STATE)
