@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🥇超星学习通｜知到智慧树--网课小助手（大模型答题版）
 // @namespace    noshuang
-// @version      0.7.7
+// @version      0.7.8
 // @author       isMobile
 // @description  🫧 目前已经支持的平台：【超星学习通「功能基本完成」】【知到智慧树「目前只支持答题」】。🚀 目前已经具有的功能包括：▶️视频自动观看，跳转下一个任务点，📄章节测试、作业自动完成，无答案自动保存，💯考试自动完成，自动切换、保存。使用脚本请进入对应平台的页面。📚 脚本不内置题库、也不推荐题库服务商：题库接口需自带（在「答题」页填地址和密钥），没有题库可以直接用大模型答题。🤖 新增大模型答题：在「设置 - 大模型答题设置」里填好接口地址、API 密钥和模型名称，即可让大模型自动作答（支持 OpenAI 兼容接口，如 DeepSeek、通义千问、Kimi、智谱、硅基流动等）。✍️ 选择题答案会明确标出该选 A、B、C、D 中的哪一个选项，判断题给出「对」或「错」。🔎 模型名称支持一键从接口地址拉取，拉回来的模型直接点一下就填好。
 // @license      MIT
@@ -43,8 +43,6 @@
 // @grant        GM_xmlhttpRequest
 // @grant        unsafeWindow
 // @run-at       document-start
-// @antifeature  ads      公众号或者app辅助答题
-// @antifeature  payment  付费答题
 // ==/UserScript==
 
 (e=>{if(typeof GM_addStyle=="function"){GM_addStyle(e);return}const i=document.createElement("style");i.textContent=e,document.head.append(i)})(' .main-page .guide-page{box-sizing:border-box;max-height:min(400px,calc(100vh - 160px));max-height:min(400px,calc(100dvh - 160px));overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;padding:2px 4px 2px 0;color:#4e5969;font-size:12px;line-height:1.7;scrollbar-width:thin;scrollbar-color:#c7d7eb transparent}.main-page .guide-page:focus-visible{outline:2px solid #176ae5;outline-offset:2px;border-radius:8px}.main-page .guide-header{margin:0 0 10px;padding:11px 12px;border:1px solid #d9e8fc;border-radius:9px;background:linear-gradient(120deg,#edf5ff 0%,#f8fbff 100%)}.main-page .guide-heading-row{display:flex;align-items:center;justify-content:space-between;gap:8px}.main-page .guide-title{margin:0;color:#174b94;font-size:13px;font-weight:600;line-height:1.6}.main-page .guide-tag{flex-shrink:0;padding:1px 7px;border:1px solid #d4e5fc;border-radius:20px;background-color:#fff;color:#2262b5;font-size:10px;line-height:18px}.main-page .guide-subtitle{margin:3px 0 0;color:#61758e;font-size:11px}.main-page .guide-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}.main-page .guide-card{min-width:0;padding:10px;border:1px solid #e4eaf2;border-radius:8px;background-color:#fff}.main-page .guide-card-heading{display:flex;align-items:center;gap:8px;margin-bottom:6px}.main-page .guide-number{display:inline-flex;align-items:center;justify-content:center;flex:0 0 24px;height:24px;border-radius:7px;background-color:#eaf3ff;color:#176ae5;font-size:11px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums}.main-page .guide-card-title{margin:0;color:#263a55;font-size:12px;font-weight:600;line-height:1.6}.main-page .guide-copy{margin:0;overflow-wrap:anywhere}.main-page .guide-flow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin:10px 0 0;padding:9px 4px 7px;border-radius:7px;background-color:#f3f7fd;list-style:none}.main-page .guide-flow-step{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;color:#3a5a83;font-size:10px;line-height:18px;text-align:center}.main-page .guide-flow-step+.guide-flow-step:before{position:absolute;top:8px;left:-5px;width:5px;height:5px;border-top:1px solid #9cb8da;border-right:1px solid #9cb8da;content:"";transform:rotate(45deg)}.main-page .guide-flow-number{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid #d5e4f8;border-radius:50%;background-color:#fff;color:#176ae5;font-size:11px;font-weight:600;line-height:1}.main-page{--app-font-family: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";--el-font-family: var(--app-font-family);z-index:100003;position:fixed;color:#1f2329;font-family:var(--app-font-family)!important;font-size:14px;line-height:1.5715;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}.main-page *,.main-page input,.main-page button,.main-page textarea{font-family:var(--app-font-family)!important;letter-spacing:0}.main-page .el-card,.main-page .el-tabs,.main-page .el-text,.main-page .el-button,.main-page .el-input,.main-page .el-input__inner,.main-page .el-input-number,.main-page .el-table{font-family:var(--app-font-family)!important}.main-page .overlay{position:fixed;top:0;left:0;right:0;bottom:0;z-index:1001}.main-page .el-card{border:0}.main-page .card-header{display:flex;justify-content:space-between;flex-direction:row;align-items:center;margin:0;padding:0;cursor:move}.main-page .card-header .title{font-size:14px;display:flex;align-items:center;justify-content:center;font-weight:500}.main-page .warning-icon{margin-left:5px}.main-page .zoom-icon{cursor:pointer}.main-page .zoom-icon.is-spaced{margin-left:8px}.main-page .minus{margin:5px 10px -10px 0}.main-page .compact-divider{margin:0}.main-page .demo-tabs{display:initial}.main-page .el-card__header{background-color:#1f71e0;color:#fff;padding:7px 10px 7px 16px;margin:0}.main-page .el-card__body{padding:0 16px 20px}.main-page .el-tabs__nav-wrap:after{height:1px}.main-page .el-tabs__active-bar{background-color:#176ae5}.main-page .el-tabs__item{font-size:13px;height:34px}.main-page .el-tabs__item.is-top{font-weight:400;color:#4e5969;padding:0 8px 0 12px}.main-page .el-tabs__item.is-active{font-weight:500;color:#176ae5;padding:0 8px 0 12px}.main-page .script-home{padding-top:2px}.main-page .log .el-text{font-weight:400;white-space:normal}.main-page .log-time{font-weight:400}.main-page .log-action-link{color:#176ae5;cursor:pointer;text-decoration:none}.main-page .log-action-link:hover{color:#409eff;text-decoration:underline}.main-page .log-divider{margin:0}.main-page .token-input,.main-page .question-list{font-size:12px}.main-page .token-label{border-radius:0}.main-page .question_table{width:625px}.main-page .answer-legend{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;padding:10px 2px 8px;font-size:11px;line-height:18px}.main-page .answer-legend>span{display:inline-flex;align-items:center;gap:5px}.main-page .answer-legend>span:before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}.main-page .answer-result{line-height:1.7;overflow-wrap:anywhere}.main-page .answer-result--success{color:#15803d}.main-page .answer-result--searching{color:#a15c08}.main-page .answer-result--pending{color:#697586}.main-page .answer-result--error{color:#c73e38}.main-page .setting{margin-top:-8px;font-size:14px}.main-page .setting-section-title{font-size:13px}.main-page .setting-checkbox{margin-bottom:6px}.main-page .setting-number{margin-top:6px}.main-page .setting .el-form-item{margin-bottom:0} ');
@@ -112,11 +110,11 @@
   var _unsafeWindow = /* @__PURE__ */ (() => typeof unsafeWindow != "undefined" ? unsafeWindow : void 0)();
   const getScriptInfo = () => {
     return {
-      name: _GM_info.script.name,
-      author: _GM_info.script.author,
-      namespace: _GM_info.script.namespace,
-      version: _GM_info.script.version,
-      description: _GM_info.script.description
+      name: _GM_info?.script?.name ?? "网课助手",
+      author: _GM_info?.script?.author ?? "OnlineCourseHelper",
+      namespace: _GM_info?.script?.namespace ?? "",
+      version: _GM_info?.script?.version ?? "0.0.0",
+      description: _GM_info?.script?.description ?? ""
     };
   };
   const EXACT_SEARCH_PATH = "/api/open/v1/search/exact";
@@ -232,11 +230,27 @@
       return legacyConfig;
     return "";
   };
+  const PAGE_STORAGE_SECRET_PARAM_NAMES = ["API 密钥"];
+  const stripSecretsForPageStorage = (config2) => {
+    const copy = cloneLatestValue(config2);
+    const llmParams = copy?.llm?.params;
+    if (Array.isArray(llmParams))
+      for (const param of llmParams) {
+        if (param && PAGE_STORAGE_SECRET_PARAM_NAMES.includes(param.name) && typeof param.value === "string")
+          param.value = "";
+      }
+    if (Array.isArray(copy?.queryApis))
+      for (const api of copy.queryApis) {
+        if (api && typeof api.token === "string")
+          api.token = "";
+      }
+    return copy;
+  };
   const persistConfig = (config2) => {
     const serializedConfig = JSON.stringify(config2);
     _GM_setValue(CONFIG_STORAGE_KEY, serializedConfig);
     _GM_setValue(LEGACY_CONFIG_STORAGE_KEY, serializedConfig);
-    setLocalStorageConfig(serializedConfig);
+    setLocalStorageConfig(JSON.stringify(stripSecretsForPageStorage(config2)));
   };
   const useConfigStore = pinia.defineStore("configStore", {
     state: () => {
@@ -459,9 +473,6 @@
     actions: {}
   });
   const formatDateTime = (dt) => {
-    dt.getFullYear();
-    dt.getMonth() + 1;
-    dt.getDate();
     let hours = dt.getHours();
     let minutes = dt.getMinutes();
     let seconds = dt.getSeconds();
@@ -486,6 +497,8 @@
           type
         };
         this.logList.push(log);
+        if (this.logList.length > 200)
+          this.logList.splice(0, this.logList.length - 200);
       }
     }
   });
@@ -1027,8 +1040,9 @@
     });
   });
   const buildVisionMessages = async (built) => {
-    const urls = built.images.slice(0, IMAGE_MAX_COUNT);
-    const dataUrls = await Promise.all(urls.map((url) => fetchImageAsDataUrl(url)));
+    const urls = built.images;
+    const sentUrls = urls.slice(0, IMAGE_MAX_COUNT);
+    const dataUrls = await Promise.all(sentUrls.map((url) => fetchImageAsDataUrl(url)));
     const parts = [];
     let attached = 0;
     let totalChars = 0;
@@ -1041,6 +1055,9 @@
       }
       parts.push({ type: "text", text: `［图${index + 1} 未发送（加载失败或体积过大），请忽略这张图］` });
     });
+    for (let index = sentUrls.length; index < urls.length; index += 1) {
+      parts.push({ type: "text", text: `［图${index + 1} 未发送（题目图片超过 ${IMAGE_MAX_COUNT} 张，只发送前 ${IMAGE_MAX_COUNT} 张），请忽略这张图］` });
+    }
     if (!attached)
       return { messages: built.messages, attached: 0 };
     return {
@@ -1184,7 +1201,7 @@
           url: requestUrl,
           method: "GET",
           headers: {
-            "Authorization": `Bearer ${settings.apiKey}`,
+            ...(settings.apiKey ? { "Authorization": `Bearer ${settings.apiKey}` } : {}),
             "Accept": "application/json"
           },
           timeout: timeoutSeconds * 1e3,
@@ -1223,8 +1240,6 @@
   const requestLlmModels = async (settings) => {
     if (!settings.baseUrl)
       return { success: false, message: "请先填写接口地址" };
-    if (!settings.apiKey)
-      return { success: false, message: "请先填写 API 密钥，多数平台要带密钥才能读取模型列表" };
     if (typeof _GM_xmlhttpRequest !== "function")
       return { success: false, message: "GM_xmlhttpRequest 不可用：脚本管理器没有给本脚本跨域权限，请重新安装脚本并同意授权" };
     const tried = [];
@@ -1249,6 +1264,30 @@
       useLogStore().addLog(message, type);
     } catch (error) {
     }
+  };
+  const escapeHtmlText = (text) => String(text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  const DISPLAY_IMG_RE = /<img\b[^>]*?\bsrc\s*=\s*["']?([^"'\s>]+)["']?[^>]*>/gi;
+  const sanitizeHtmlForDisplay = (html) => {
+    const images = [];
+    const text = String(html ?? "").replace(DISPLAY_IMG_RE, (_whole, src) => {
+      const key = String(src || "").trim();
+      if (key)
+        images.push(`<img src="${escapeHtmlText(key)}" alt="图" style="max-width:100%;vertical-align:middle"/>`);
+      return "";
+    });
+    const escaped = escapeHtmlText(text);
+    return images.length ? `${escaped}${images.join("")}` : escaped;
+  };
+  const requestChatWithRetry = async (settings, messages) => {
+    const first = await requestLlmChat(settings, messages);
+    if (first.success)
+      return first;
+    const status = Number(first.status);
+    if (status !== 429 && !(status >= 500 && status < 600))
+      return first;
+    safeAddLog(`大模型接口返回 HTTP ${status}，3 秒后自动重试一次`, "warning");
+    await sleep(3);
+    return requestLlmChat(settings, messages);
   };
   let lastLlmPromptPreview = "";
   const askLlm = async (question) => {
@@ -1278,7 +1317,7 @@
         _unsafeWindow.__cxLastPrompt = lastLlmPromptPreview;
       } catch (error) {
       }
-      let response = await requestLlmChat(settings, messages);
+      let response = await requestChatWithRetry(settings, messages);
       if (!response.success && attachedImages && /(image|vision|multimodal|unsupported|invalid|400|422)/i.test(String(response.message))) {
         safeAddLog("大模型接口不接受图片，已自动改用纯文本重试（识图未生效）", "warning");
         attachedImages = 0;
@@ -1946,7 +1985,7 @@
                 }, {
                   default: vue.withCtx((scope) => [
                     vue.createElementVNode("span", {
-                      innerHTML: getDisplayTitle(scope.row)
+                      innerHTML: sanitizeHtmlForDisplay(getDisplayTitle(scope.row))
                     }, null, 8, _hoisted_3$1)
                   ]),
                   _: 1
@@ -1962,7 +2001,7 @@
                     }, [
                       getAnswerStatus(scope.row) === "pending" ? (vue.openBlock(), vue.createElementBlock("span", _hoisted_4$2, "等待查询…")) : getAnswerStatus(scope.row) === "searching" ? (vue.openBlock(), vue.createElementBlock("span", _hoisted_5, "正在查询答案…")) : (vue.openBlock(), vue.createElementBlock("div", {
                         key: 2,
-                        innerHTML: scope.row.answer.join()
+                        innerHTML: sanitizeHtmlForDisplay(scope.row.answer.join())
                       }, null, 8, _hoisted_6))
                     ], 2)
                   ]),
@@ -6422,7 +6461,7 @@
         return html.replace(/<((?!img|sub|sup|br)[^>]+)>/g, "").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").replace(/<br\s*\/?>/g, "\n").replace(/<img.*?src="(.*?)".*?>/g, '<img src="$1"/>').trim();
       });
       __publicField(this, "clean", (str) => {
-        return str.replace(/^【*?】\s*/, "").replace(/\s*（\d+\.\d+分）$/, "");
+        return str.replace(/^\s*[【\[]\s*[^】\]]{0,10}[】\]]\s*/u, "").replace(/\s*（\d+\.\d+分）$/, "");
       });
       __publicField(this, "findMatchedOption", (options, answer) => {
         const normalizedAnswer = this.normalizeOptionMatchText(String(answer));
@@ -6628,30 +6667,7 @@
       __publicField(this, "normalizeOptionMatchText", (text) => {
         return this.clean(this.removeHtml(text)).replace(/<img\s+src=["']?([^"'>\s]+).*?>/gi, "$1").replace(/&[a-z]+;/gi, "").replace(/^[a-z]\s*[.．、：\]]\s*/i, "").replace(/[\s\u00a0]+/g, "").replace(/[,.，。、：；？！'""''「」【】《》（）()\[\]{}【】<>]/g, "").toLowerCase();
       });
-      __publicField(this, "calculateTextSimilarity", (left, right) => {
-        if (!left || !right)
-          return 0;
-        if (left === right)
-          return 100;
-        const leftChars = Array.from(left);
-        const rightChars = Array.from(right);
-        const distance = this.getLevenshteinDistance(leftChars, rightChars);
-        const maxLength = Math.max(leftChars.length, rightChars.length);
-        return Math.round((1 - distance / maxLength) * 100);
-      });
-      __publicField(this, "getLevenshteinDistance", (left, right) => {
-        const distances = Array.from({ length: left.length + 1 }, (_, index) => index);
-        right.forEach((rightChar, rightIndex) => {
-          let previous = distances[0];
-          distances[0] = rightIndex + 1;
-          left.forEach((leftChar, leftIndex) => {
-            const current = distances[leftIndex + 1];
-            distances[leftIndex + 1] = leftChar === rightChar ? previous : Math.min(previous, distances[leftIndex], current) + 1;
-            previous = current;
-          });
-        });
-        return distances[left.length];
-      });
+      __publicField(this, "calculateTextSimilarity", (left, right) => getOptionSimilarity(left, right));
       __publicField(this, "normalizeJudgementText", (optionText) => {
         const text = this.clean(optionText).replace(/[.．、：\s]/g, "").toLowerCase();
         if (/^(a)?(正确|是|对|√|t|true|right)$/.test(text))
@@ -6827,7 +6843,7 @@
               const failureReason = ((_b = answerData.error) == null ? void 0 : _b.message) || "未查询到答案";
               this.addLog(`第${index + 1}道题搜索失败：${escapeLogText(failureReason)}`, "danger");
               question.answerStatus = "error";
-              question.answer = [escapeLogText(failureReason)];
+              question.answer = [failureReason];
               question.confidence = "";
             }
           }
@@ -6844,21 +6860,23 @@
       __publicField(this, "decryptIfNeeded", () => {
         if (!this._document || decryptedDocuments.has(this._document))
           return;
-        decryptedDocuments.add(this._document);
         let stats;
         try {
           stats = decrypt(this._document);
         } catch (error) {
-          this.addLog(`题目字体还原时出错：${escapeLogText(String(error?.message || error))}，这会让大模型读到乱码`, "danger");
+          this.addLog(`题目字体还原时出错：${escapeLogText(String(error?.message || error))}，稍后会自动重试`, "danger");
           return;
         }
+        const definitiveSkip = /没有字体混淆|没有可解密的文档/.test(String(stats.reason || ""));
+        if (stats.ok || definitiveSkip)
+          decryptedDocuments.add(this._document);
         if (stats.elements) {
           if (stats.unresolved)
             this.addLog(`题目字体已还原 ${stats.elements} 处，但有 ${stats.unresolved} 个字不在字形表里（页面字体可能更新了），这些字大模型会读成乱码`, "warning");
           else
             this.addLog(`题目字体混淆已还原（${stats.elements} 处），大模型读到的题干是正常文字`, "success");
-        } else if (stats.reason && !/没有字体混淆/.test(stats.reason))
-          this.addLog(`题目字体还原失败：${stats.reason}。大模型会读到乱码，正确率会明显偏低`, "danger");
+        } else if (stats.reason && !definitiveSkip)
+          this.addLog(`题目字体还原失败：${stats.reason}。稍后会自动重试；如果一直失败，大模型会读到乱码，正确率会明显偏低`, "danger");
       });
       __publicField(this, "logTypeSummary", () => {
         if (!this.questions.length)
@@ -7098,8 +7116,23 @@
     const questionStore = useQuestionStore();
     const init = () => {
       const currentUrl = window.location.href;
-      if (!currentUrl.includes("&mooc2=1")) {
-        window.location.href = currentUrl + "&mooc2=1";
+      let needRedirect = false;
+      let nextUrl = "";
+      try {
+        const pageUrl = new URL(currentUrl);
+        if (pageUrl.searchParams.get("mooc2") !== "1") {
+          pageUrl.searchParams.set("mooc2", "1");
+          nextUrl = pageUrl.toString();
+          needRedirect = true;
+        }
+      } catch (error) {
+        if (!/[?&]mooc2=1(?=&|$)/.test(currentUrl)) {
+          nextUrl = currentUrl + (currentUrl.includes("?") ? "&" : "?") + "mooc2=1";
+          needRedirect = true;
+        }
+      }
+      if (needRedirect) {
+        window.location.href = nextUrl;
       }
       questionStore.clearQuestion();
       logStore.addLog(`检测到用户进入到章节学习页面`, "primary");
@@ -7303,13 +7336,23 @@
         return;
       iframeWindow.alert = () => {
       };
+      const noSubmitWork = async () => {
+        if (typeof iframeWindow.noSubmit === "function") {
+          await iframeWindow.noSubmit();
+        } else {
+          logStore.addLog("页面上没有找到暂存方法（noSubmit），请手动暂存", "danger");
+        }
+      };
       if (getChapterParam("章节作业自动提交")?.value) {
-        const threshold = Number(configStore.otherParams.params[2].value);
+        const thresholdParam = configStore.otherParams.params.find((param) => String(param?.name || "").includes("正确率"));
+        const threshold = Number((thresholdParam == null ? void 0 : thresholdParam.value) ?? 85);
         const stats = handler.lastStats;
         logStore.addLog("自动提交已开启，尝试提交", "primary");
         if (!stats || !stats.total || !Number.isFinite(confidentRate) || confidentRate < threshold) {
           logStore.addLog(`有把握的题只占 ${Number.isFinite(confidentRate) ? confidentRate.toFixed(0) : 0}%（阈值 ${threshold}%），按「猜的题不自动交」规则暂存`, "danger");
-          await iframeWindow.noSubmit();
+          await noSubmitWork();
+        } else if (typeof iframeWindow.btnBlueSubmit !== "function" || typeof iframeWindow.submitCheckTimes !== "function") {
+          logStore.addLog(`有把握的题占 ${confidentRate.toFixed(0)}%（阈值 ${threshold}%），但页面上没有找到提交方法（btnBlueSubmit/submitCheckTimes），请手动提交`, "danger");
         } else {
           logStore.addLog(`有把握的题占 ${confidentRate.toFixed(0)}%（阈值 ${threshold}%），提交`, "success");
           await iframeWindow.btnBlueSubmit();
@@ -7325,7 +7368,7 @@
         }
       } else {
         logStore.addLog("未开启自动提交，暂存", "primary");
-        await iframeWindow.noSubmit();
+        await noSubmitWork();
       }
       if (context.isCurrent())
         logStore.addLog("作业已完成", "success");
@@ -7354,8 +7397,16 @@
     };
     const processBook = async (iframeWindow) => {
       logStore.addLog("发现一个电子书，正在解析", "warning");
-      _unsafeWindow.top.onchangepage(iframeWindow.getFrameAttr("end"));
-      logStore.addLog("阅读完成", "success");
+      let jumped = false;
+      try {
+        const topWindow = _unsafeWindow.top;
+        if (topWindow && typeof topWindow.onchangepage === "function" && typeof iframeWindow.getFrameAttr === "function") {
+          topWindow.onchangepage(iframeWindow.getFrameAttr("end"));
+          jumped = true;
+        }
+      } catch (error) {
+      }
+      logStore.addLog(jumped ? "阅读完成" : "电子书翻页接口不可用，请手动翻到最后一页", jumped ? "success" : "danger");
       return Promise.resolve();
     };
     const runIframeDocumentTask = (iframeDocument, task) => {
@@ -7503,10 +7554,14 @@
       logStore.addLog("自动切换已开启，正在前往下一题", "success");
       await sleep(getAnswerInterval());
       if (clickNextStepButton()) {
-        logStore.addLog("已经到最后一题，正在点击下一步", "success");
+        logStore.addLog("已点击页面「下一步」按钮", "success");
         return;
       }
-      _unsafeWindow.getTheNextQuestion(1);
+      if (typeof _unsafeWindow.getTheNextQuestion === "function") {
+        _unsafeWindow.getTheNextQuestion(1);
+      } else {
+        logStore.addLog("没有找到切换下一题的方法（getTheNextQuestion），请手动切换", "danger");
+      }
     } else {
       logStore.addLog("已经关闭自动切换，在设置里可更改", "danger");
     }
@@ -7520,6 +7575,8 @@
         this.parseHtml();
         if (this.questions.length) {
           this.addLog(`成功解析到${this.questions.length}个题目`, "primary");
+          if (!this.shouldAutoSwitch())
+            this.addLog("智慧树「是否自动切换」已关闭，答完题后停留在当前页，可在设置里开启", "primary");
           for (const [index, parsedQuestion] of this.questions.entries()) {
             const question = vue.reactive({ ...parsedQuestion, answerStatus: "searching" });
             this.addQuestion(question);
@@ -7545,9 +7602,11 @@
               const failureReason = ((_b = answerData.error) == null ? void 0 : _b.message) || "未查询到答案";
               this.addLog(`第${index + 1}道题搜索失败：${escapeLogText(failureReason)}`, "danger");
               question.answerStatus = "error";
-              question.answer = [escapeLogText(failureReason)];
+              question.answer = [failureReason];
             }
-            await ((_d = (_c = this._document) == null ? void 0 : _c.querySelectorAll(".switch-btn-box > button")[1]) == null ? void 0 : _d.click());
+            if (this.shouldAutoSwitch()) {
+              await ((_d = (_c = this._document) == null ? void 0 : _c.querySelectorAll(".switch-btn-box > button")[1]) == null ? void 0 : _d.click());
+            }
           }
         } else
           this.addLog("未解析到题目，请刷新重试或进入答题页面", "danger");
@@ -7605,6 +7664,15 @@
           return { total: 1, applied: 1, failed: [] };
         }
         return null;
+      });
+      __publicField(this, "shouldAutoSwitch", () => {
+        try {
+          const configStore = useConfigStore();
+          const param = configStore.platformParams.zhs?.parts?.[0]?.params?.find((item) => String(item?.name || "").includes("自动切换"));
+          return param ? Boolean(param.value) : true;
+        } catch (error) {
+          return true;
+        }
       });
     }
     extractOptions(optionElements, optionSelector) {
@@ -7717,6 +7785,9 @@
     }
   }
   const hookError = () => {
+    if (globalThis.__cxHookErrorStarted)
+      return;
+    globalThis.__cxHookErrorStarted = true;
     console.log("hookError");
     const oldset = _unsafeWindow.setInterval;
     const oldout = _unsafeWindow.setTimeout;
@@ -7737,48 +7808,66 @@
   };
   class XMLHttpRequestInterceptor {
     constructor(urlList, callback) {
-      __publicField(this, "xhr");
       __publicField(this, "originalOpen");
       __publicField(this, "originalSend");
       __publicField(this, "callback");
-      this.xhr = new XMLHttpRequest();
-      this.originalOpen = this.xhr.open;
-      this.originalSend = this.xhr.send;
+      this.originalOpen = XMLHttpRequest.prototype.open;
+      this.originalSend = XMLHttpRequest.prototype.send;
       this.callback = callback;
       this.intercept(urlList);
     }
     intercept(urlList) {
       const self = this;
       XMLHttpRequest.prototype.open = function(method, url2) {
-        self.originalOpen.apply(this, [method, url2]);
-        const shouldIntercept = urlList.some((urlItem) => url2.includes(urlItem));
-        if (shouldIntercept) {
-          self.callback(this.responseText);
+        try {
+          this.__cxInterceptMatched = urlList.some((urlItem) => String(url2).includes(urlItem));
+        } catch (error) {
+          this.__cxInterceptMatched = false;
         }
+        return self.originalOpen.apply(this, [method, url2]);
+      };
+      XMLHttpRequest.prototype.send = function(...args) {
+        if (this.__cxInterceptMatched) {
+          this.addEventListener("load", () => {
+            try {
+              self.callback(this.responseText);
+            } catch (error) {
+              console.error(error);
+            }
+          }, { once: true });
+        }
+        return self.originalSend.apply(this, args);
       };
     }
   }
   const useZhsAnswerLogic = async () => {
-    hookError();
     const logStore = useLogStore();
     const questionStore = useQuestionStore();
     questionStore.clearQuestion();
     logStore.addLog(`进入答题页面，开始准备答题`, "primary");
     logStore.addLog(`正在解析题目, 请等待5s`, "warning");
+    let answering = false;
     new XMLHttpRequestInterceptor(["gateway/t/v1/answer/hasAnswer"], async () => {
-      await sleep(1);
-      _unsafeWindow.document.getSelection = function() {
-        return {
-          removeAllRanges: function() {
-          }
+      if (answering)
+        return false;
+      answering = true;
+      try {
+        await sleep(1);
+        _unsafeWindow.document.getSelection = function() {
+          return {
+            removeAllRanges: function() {
+            }
+          };
         };
-      };
-      _unsafeWindow.document.onselectstart = true;
-      _unsafeWindow.document.oncontextmenu = true;
-      _unsafeWindow.document.oncut = true;
-      _unsafeWindow.document.oncopy = true;
-      _unsafeWindow.document.onpaste = true;
-      await new ZhsQuestionHandler().init();
+        _unsafeWindow.document.onselectstart = true;
+        _unsafeWindow.document.oncontextmenu = true;
+        _unsafeWindow.document.oncut = true;
+        _unsafeWindow.document.oncopy = true;
+        _unsafeWindow.document.onpaste = true;
+        await new ZhsQuestionHandler().init();
+      } finally {
+        answering = false;
+      }
       return true;
     });
   };
@@ -7954,9 +8043,23 @@
       const isShow = vue.ref(false);
       const configStore = useConfigStore();
       const currentPlatformName = vue.computed(() => configStore.platformParams[configStore.platformName].name);
-      vue.watch(configStore, (newVal) => {
-        persistConfig(newVal);
+      let persistTimer = null;
+      const flushPersist = () => {
+        if (persistTimer) {
+          clearTimeout(persistTimer);
+          persistTimer = null;
+        }
+        persistConfig(configStore);
+      };
+      vue.watch(configStore, () => {
+        if (persistTimer)
+          clearTimeout(persistTimer);
+        persistTimer = setTimeout(flushPersist, 400);
       }, { deep: true });
+      window.addEventListener("beforeunload", () => {
+        if (persistTimer)
+          flushPersist();
+      });
       const isDragging = vue.ref(false);
       const offsetX = vue.ref(0);
       const offsetY = vue.ref(0);
@@ -8124,21 +8227,30 @@
   cssLoader("ElementPlus");
   const layoutCss = '.main-page .guide-page{box-sizing:border-box;max-height:min(400px,calc(100vh - 160px));max-height:min(400px,calc(100dvh - 160px));overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;padding:2px 4px 2px 0;color:#4e5969;font-size:12px;line-height:1.7;scrollbar-width:thin;scrollbar-color:#c7d7eb transparent}.main-page .guide-page:focus-visible{outline:2px solid #176ae5;outline-offset:2px;border-radius:8px}.main-page .guide-header{margin:0 0 10px;padding:11px 12px;border:1px solid #d9e8fc;border-radius:9px;background:linear-gradient(120deg,#edf5ff 0%,#f8fbff 100%)}.main-page .guide-heading-row{display:flex;align-items:center;justify-content:space-between;gap:8px}.main-page .guide-title{margin:0;color:#174b94;font-size:13px;font-weight:600;line-height:1.6}.main-page .guide-tag{flex-shrink:0;padding:1px 7px;border:1px solid #d4e5fc;border-radius:20px;background-color:#fff;color:#2262b5;font-size:10px;line-height:18px}.main-page .guide-subtitle{margin:3px 0 0;color:#61758e;font-size:11px}.main-page .guide-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}.main-page .guide-card{min-width:0;padding:10px;border:1px solid #e4eaf2;border-radius:8px;background-color:#fff}.main-page .guide-card-heading{display:flex;align-items:center;gap:8px;margin-bottom:6px}.main-page .guide-number{display:inline-flex;align-items:center;justify-content:center;flex:0 0 24px;height:24px;border-radius:7px;background-color:#eaf3ff;color:#176ae5;font-size:11px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums}.main-page .guide-card-title{margin:0;color:#263a55;font-size:12px;font-weight:600;line-height:1.6}.main-page .guide-copy{margin:0;overflow-wrap:anywhere}.main-page .guide-flow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin:10px 0 0;padding:9px 4px 7px;border-radius:7px;background-color:#f3f7fd;list-style:none}.main-page .guide-flow-step{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;color:#3a5a83;font-size:10px;line-height:18px;text-align:center}.main-page .guide-flow-step+.guide-flow-step:before{position:absolute;top:8px;left:-5px;width:5px;height:5px;border-top:1px solid #9cb8da;border-right:1px solid #9cb8da;content:"";transform:rotate(45deg)}.main-page .guide-flow-number{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:1px solid #d5e4f8;border-radius:50%;background-color:#fff;color:#176ae5;font-size:11px;font-weight:600;line-height:1}.main-page{--app-font-family: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";--el-font-family: var(--app-font-family);z-index:100003;position:fixed;color:#1f2329;font-family:var(--app-font-family)!important;font-size:14px;line-height:1.5715;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}.main-page *,.main-page input,.main-page button,.main-page textarea{font-family:var(--app-font-family)!important;letter-spacing:0}.main-page .el-card,.main-page .el-tabs,.main-page .el-text,.main-page .el-button,.main-page .el-input,.main-page .el-input__inner,.main-page .el-input-number,.main-page .el-table{font-family:var(--app-font-family)!important}.main-page .overlay{position:fixed;top:0;left:0;right:0;bottom:0;z-index:1001}.main-page .el-card{border:0}.main-page .card-header{display:flex;justify-content:space-between;flex-direction:row;align-items:center;margin:0;padding:0;cursor:move}.main-page .card-header .title{font-size:14px;display:flex;align-items:center;justify-content:center;font-weight:500}.main-page .warning-icon{margin-left:5px}.main-page .zoom-icon{cursor:pointer}.main-page .zoom-icon.is-spaced{margin-left:8px}.main-page .minus{margin:5px 10px -10px 0}.main-page .compact-divider{margin:0}.main-page .demo-tabs{display:initial}.main-page .el-card__header{background-color:#1f71e0;color:#fff;padding:7px 10px 7px 16px;margin:0}.main-page .el-card__body{padding:0 16px 20px}.main-page .el-tabs__nav-wrap:after{height:1px}.main-page .el-tabs__active-bar{background-color:#176ae5}.main-page .el-tabs__item{font-size:13px;height:34px}.main-page .el-tabs__item.is-top{font-weight:400;color:#4e5969;padding:0 8px 0 12px}.main-page .el-tabs__item.is-active{font-weight:500;color:#176ae5;padding:0 8px 0 12px}.main-page .script-home{padding-top:2px}.main-page .log .el-text{font-weight:400;white-space:normal}.main-page .log-time{font-weight:400}.main-page .log-action-link{color:#176ae5;cursor:pointer;text-decoration:none}.main-page .log-action-link:hover{color:#409eff;text-decoration:underline}.main-page .log-divider{margin:0}.main-page .token-input,.main-page .question-list{font-size:12px}.main-page .token-label{border-radius:0}.main-page .question_table{width:625px}.main-page .answer-legend{display:flex;flex-wrap:wrap;align-items:center;gap:6px 16px;padding:10px 2px 8px;font-size:11px;line-height:18px}.main-page .answer-legend>span{display:inline-flex;align-items:center;gap:5px}.main-page .answer-legend>span:before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}.main-page .answer-result{line-height:1.7;overflow-wrap:anywhere}.main-page .answer-result--success{color:#15803d}.main-page .answer-result--searching{color:#a15c08}.main-page .answer-result--pending{color:#697586}.main-page .answer-result--error{color:#c73e38}.main-page .setting{margin-top:-8px;font-size:14px}.main-page .setting-section-title{font-size:13px}.main-page .setting-checkbox{margin-bottom:6px}.main-page .setting-number{margin-top:6px}.main-page .setting .el-form-item{margin-bottom:0}.main-page{display:flex;flex-direction:column;max-height:calc(100vh - var(--cx-panel-top, 0px) - 8px);max-height:calc(100dvh - var(--cx-panel-top, 0px) - 8px)}.main-page>.el-card{display:flex;flex-direction:column;max-height:calc(100vh - var(--cx-panel-top, 0px) - 8px);max-height:calc(100dvh - var(--cx-panel-top, 0px) - 8px);overflow:hidden}.main-page .el-card__header{flex:0 0 auto}.main-page .el-card__body{flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#c7d7eb transparent}.main-page .el-card__body::-webkit-scrollbar{width:8px;height:8px}.main-page .el-card__body::-webkit-scrollbar-track{background-color:transparent}.main-page .el-card__body::-webkit-scrollbar-thumb{border-radius:4px;background-color:#c7d7eb}.main-page .el-card__body::-webkit-scrollbar-thumb:hover{background-color:#a9c0dc}.main-page .guide-page{max-height:none;overflow:visible;overscroll-behavior:auto}.main-page .setting-model{display:flex;flex-direction:column;gap:6px;margin-top:6px}.main-page .setting-model .el-button{align-self:flex-start}.main-page .setting-model-select{flex:0 0 100%;box-sizing:border-box;width:100%;height:28px;padding:0 6px;border:1px solid #d5e4f8;border-radius:6px;background-color:#fff;color:#1f2d3d;font-size:12px;line-height:26px;cursor:pointer}.main-page .setting-model-select:hover{border-color:#176ae5}.main-page .setting-model-select:focus{outline:none;border-color:#176ae5;box-shadow:0 0 0 2px rgba(23,106,229,.12)}.main-page .setting-model-list{display:flex;flex-wrap:wrap;gap:6px;max-height:150px;overflow:auto;padding:6px;border:1px solid #e4eaf2;border-radius:6px;background-color:#fafcff}.main-page .setting-model-list-title{flex:0 0 100%;color:#61758e;font-size:11px;line-height:16px}.main-page .setting-model-item{padding:2px 8px;border:1px solid #d5e4f8;border-radius:12px;background-color:#fff;color:#2262b5;font-size:11px;line-height:18px;cursor:pointer}.main-page .setting-model-item:hover{border-color:#176ae5;color:#176ae5}.main-page .setting-model-item.is-active{border-color:#176ae5;background-color:#e8f2ff;color:#176ae5;font-weight:600}.main-page .setting-hint{margin:2px 0 4px;color:#8a94a6;font-size:11px;line-height:1.6;word-break:break-word}\n';
   const hookWebpack = () => {
-    let originCall = _unsafeWindow.Function.prototype.call;
+    if (globalThis.__cxWebpackHooked)
+      return;
+    globalThis.__cxWebpackHooked = true;
+    const originCall = _unsafeWindow.Function.prototype.call;
     _unsafeWindow.Function.prototype.call = function(...args) {
-      var _a, _b;
       const result = originCall.apply(this, args);
-      if (((_b = (_a = args[0]) == null ? void 0 : _a.a) == null ? void 0 : _b.version) === "2.5.0") {
-        const install = args[1].exports.a.install;
-        args[1].exports.a.install = function(...installArgs) {
-          installArgs[0].mixin({
-            mounted: function() {
-              this.$el["__Ivue__"] = this;
+      try {
+        const webpackExports = args?.[1]?.exports?.a;
+        if (args?.[0]?.a?.version === "2.5.0" && webpackExports && typeof webpackExports.install === "function" && !webpackExports.install.__cxWrapped) {
+          const install = webpackExports.install;
+          webpackExports.install = function(...installArgs) {
+            try {
+              installArgs[0]?.mixin?.({
+                mounted: function() {
+                  if (this.$el)
+                    this.$el["__Ivue__"] = this;
+                }
+              });
+            } catch (error) {
             }
-          });
-          return install.apply(this, installArgs);
-        };
-        return result;
+            return install.apply(this, installArgs);
+          };
+        }
+      } catch (error) {
       }
       return result;
     };
@@ -8308,9 +8420,8 @@
       }
       const rate = getVideoRateSetting();
       if (rate <= 1) {
-        if (Math.abs(video.playbackRate - 1) > 0.01) {
-          try { video.playbackRate = 1; } catch (error) {}
-        }
+        corrections = 0;
+        locked = false;
         return;
       }
       if (locked)
@@ -8367,10 +8478,15 @@
     startVideoQuizWatcher();
     startVideoRateWatcher();
   };
+  const SCRIPT_HOST_RE = /(^|\.)(chaoxing|zhihuishu|nbdlib|hnsyu|gdhkmooc)\./i;
+  const SCRIPT_PATH_RE = /studentstudy|dowork|exam-ans|stuExamWeb/i;
+  const shouldBootstrapPage = () => SCRIPT_HOST_RE.test(String(_unsafeWindow.location.hostname || "")) || SCRIPT_PATH_RE.test(String(_unsafeWindow.location.href || ""));
   const timer = setInterval(() => {
     if (document.readyState !== COMPLETE_READY_STATE)
       return;
     clearInterval(timer);
+    if (!shouldBootstrapPage())
+      return;
     mountApp();
   }, BOOTSTRAP_INTERVAL);
 
